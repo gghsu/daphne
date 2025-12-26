@@ -21,6 +21,7 @@
 #include <runtime/local/datastructures/Structure.h>
 
 #include <cstddef>
+#include <optional>
 
 /**
  * @brief The base class of all matrix implementations.
@@ -32,9 +33,12 @@ template <typename ValueType> class Matrix : public Structure {
 
   protected:
     Matrix(size_t numRows, size_t numCols)
-        : Structure(numRows, numCols), sparsity(-1), symmetric(BoolOrUnknown::Unknown){
-                                                         // nothing to do
-                                                     };
+        : Structure(numRows, numCols), is_sparsity(false), sparsity(-1), is_symmetric(false), symmetric(BoolOrUnknown::Unknown),
+            is_sortness(false), sortness(MatrixSortness::Unknown), is_minValue(false), minValue(-1),
+            is_maxValue(false), maxValue(-1), is_distinct(false), distinct(-1),
+            is_sparsityPatternID(false), sparsityPatternID(-1) {
+              // nothing to do
+          };
 
   public:
     /**
@@ -45,6 +49,7 @@ template <typename ValueType> class Matrix : public Structure {
      *
      * Note that, so far, this is the compile-time estimate (not the actual run-time value) of the sparsity.
      */
+    bool is_sparsity;
     double sparsity;
 
     /**
@@ -54,7 +59,22 @@ template <typename ValueType> class Matrix : public Structure {
      *
      * Note that, so far, this is the compile-time estimate (not the actual run-time value) of the symmetry.
      */
+    bool is_symmetric;
     BoolOrUnknown symmetric;
+
+    bool is_sortness;
+    MatrixSortness sortness;
+
+    bool is_minValue;
+    double minValue;
+    bool is_maxValue;
+    double maxValue;
+
+    bool is_distinct;
+    ssize_t distinct;
+
+    bool is_sparsityPatternID;
+    ssize_t sparsityPatternID;
 
     virtual ~Matrix(){
         // nothing to do

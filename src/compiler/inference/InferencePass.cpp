@@ -31,10 +31,12 @@
 using namespace mlir;
 
 daphne::InferenceConfig::InferenceConfig(bool partialInferenceAllowed, bool typeInference, bool shapeInference,
-                                         bool frameLabelInference, bool sparsityInference, bool symmetricInference)
+                                         bool frameLabelInference, bool sparsityInference, bool sparsityPatternInference, bool symmetricInference,
+                                         bool sortnessInference, bool minMaxInference, bool distinctInference)
     : partialInferenceAllowed(partialInferenceAllowed), typeInference(typeInference), shapeInference(shapeInference),
-      frameLabelInference(frameLabelInference), sparsityInference(sparsityInference),
-      symmetricInference(symmetricInference) {}
+      frameLabelInference(frameLabelInference), sparsityInference(sparsityInference), sparsityPatternInference(sparsityPatternInference),
+      symmetricInference(symmetricInference), sortnessInference(sortnessInference),
+      minMaxInference(minMaxInference), distinctInference(distinctInference) {}
 
 namespace {
 void castOperandIf(OpBuilder &builder, Operation *op, size_t operandIdx, Type type) {
@@ -75,11 +77,23 @@ Type getTypeWithCommonInfo(Type t1, Type t2) {
         const daphne::MatrixRepresentation repr2 = mat2.getRepresentation();
         const BoolOrUnknown sym1 = mat1.getSymmetric();
         const BoolOrUnknown sym2 = mat2.getSymmetric();
+        const MatrixSortness sort1 = mat1.getSortness();
+        const MatrixSortness sort2 = mat2.getSortness();
+        const std::optional<double> min1 = mat1.getMinValue();
+        const std::optional<double> min2 = mat2.getMinValue();
+        const std::optional<double> max1 = mat1.getMaxValue();
+        const std::optional<double> max2 = mat2.getMaxValue();
+        const ssize_t dist1 = mat1.getDistinct();
+        const ssize_t dist2 = mat2.getDistinct();
         return daphne::MatrixType::get(ctx, (vt1 == vt2) ? vt1 : u, (nr1 == nr2) ? nr1 : -1, (nc1 == nc2) ? nc1 : -1,
                                        // TODO Maybe do approximate comparison of floating-point values.
                                        (sp1 == sp2) ? sp1 : -1,
                                        (repr1 == repr2) ? repr1 : daphne::MatrixRepresentation::Default,
-                                       (sym1 == sym2) ? sym1 : BoolOrUnknown::Unknown);
+                                       (sym1 == sym2) ? sym1 : BoolOrUnknown::Unknown,
+                                       (sort1 == sort2) ? sort1 : MatrixSortness::Unknown,
+                                       (min1 == min2) ? min1 : std::nullopt,
+                                       (max1 == max2) ? max1 : std::nullopt,
+                                       (dist1 == dist2) ? dist1 : -1, -1);
     } else if (frm1 && frm2) { // both types are frames
         const std::vector<Type> cts1 = frm1.getColumnTypes();
         const std::vector<Type> cts2 = frm2.getColumnTypes();
@@ -270,6 +284,94 @@ class InferencePass : public PassWrapper<InferencePass, OperationPass<func::Func
                         const Type rt = rv.getType();
                         if (auto mt = rt.dyn_cast<daphne::MatrixType>())
                             rv.setType(mt.withSymmetric(symmetric));
+                    }
+                }
+            }
+            if (cfg.sortnessInference && returnsUnknownSortness(op)) {
+                // Try to infer the sortness of all results of this operation.
+                std::vector<MatrixSortness> sortnesses = daphne::tryInferSortness(op);
+                const size_t numRes = op->getNumResults();
+                if (sortnesses.size() != numRes)
+                    throw ErrorHandler::compilerError(
+                        op, "InferencePass",
+                        "sortness inference for op " + op->getName().getStringRef().str() + " returned " +
+                            std::to_string(sortnesses.size()) + " entries, but the op has " + std::to_string(numRes) +
+                            " results");
+                // Set the inferred values on all results of this operation.
+                for (size_t i = 0; i < numRes; i++) {
+                    const MatrixSortness sortness = sortnesses[i];
+                    if (llvm::isa<mlir::daphne::MatrixType>(op->getResultTypes()[i])) {
+                        Value rv = op->getResult(i);
+                        const Type rt = rv.getType();
+                        if (auto mt = rt.dyn_cast<daphne::MatrixType>())
+                            rv.setType(mt.withSortness(sortness));
+                    }
+                }
+            }
+            if (cfg.minMaxInference && returnsUnknownMinMax(op)) {
+                // Try to infer the min max of all results of this operation.
+                std::vector<std::pair<std::optional<double>, std::optional<double>>> minmaxs = daphne::tryInferMinMax(op);
+                const size_t numRes = op->getNumResults();
+                if (minmaxs.size() != numRes)
+                    throw ErrorHandler::compilerError(
+                        op, "InferencePass",
+                        "minmax inference for op " + op->getName().getStringRef().str() + " returned " +
+                            std::to_string(minmaxs.size()) + " entries, but the op has " + std::to_string(numRes) +
+                            " results");
+                // Set the infered values on all results of this operation.
+                for (size_t i = 0; i < numRes; i++) {
+                    if (llvm::isa<mlir::daphne::MatrixType>(op->getResultTypes()[i])) {
+                        std::optional<double> minValue = minmaxs[i].first;
+                        std::optional<double> maxValue = minmaxs[i].second;
+
+                        Value rv = op->getResult(i);
+                        const Type rt = rv.getType();
+                        if (auto mt = rt.dyn_cast<daphne::MatrixType>())
+                            rv.setType(mt.withMinMax(minValue, maxValue));
+                    }
+                }
+            }  
+            if (cfg.distinctInference && returnsUnknownDistinct(op)) {
+                // Try to infer the distinct values of all results of this operation.
+                std::vector<ssize_t> distincts = daphne::tryInferDistinct(op);
+                const size_t numRes = op->getNumResults();
+                if (distincts.size() != numRes)
+                    throw ErrorHandler::compilerError(
+                        op, "InferencePass",
+                        "distinct inference for op " + op->getName().getStringRef().str() + " returned " +
+                            std::to_string(distincts.size()) + " entries, but the op has " + std::to_string(numRes) +
+                            " results");
+                // Set the infered distincts on all results of this operation.
+                for (size_t i = 0; i < numRes; i++) {
+                    if (llvm::isa<mlir::daphne::MatrixType>(op->getResultTypes()[i])) {
+                        const ssize_t distinct = distincts[i];
+
+                        Value rv = op->getResult(i);
+                        const Type rt = rv.getType();
+                        if (auto mt = rt.dyn_cast<daphne::MatrixType>())
+                            rv.setType(mt.withDistinct(distinct));
+                    }
+                }
+            }
+            if (cfg.sparsityPatternInference && returnsUnknownSparsityPattern(op)) {
+                // Try to infer the sparsity pattern ID of all results of this operation.
+                std::vector<ssize_t> sparsityPatternIDs = daphne::tryInferSparsityPattern(op);
+                const size_t numRes = op->getNumResults();
+                if (sparsityPatternIDs.size() != numRes)
+                    throw ErrorHandler::compilerError(
+                        op, "InferencePass",
+                        "sparsity pattern inference for op " + op->getName().getStringRef().str() + " returned " +
+                            std::to_string(sparsityPatternIDs.size()) + " entries, but the op has " + std::to_string(numRes) +
+                            " results");
+                // Set the inferred sparsity pattern IDs on all results of this operation.
+                for (size_t i = 0; i < numRes; i++) {
+                    if (llvm::isa<mlir::daphne::MatrixType>(op->getResultTypes()[i])) {
+                        const ssize_t sparsityPatternID = sparsityPatternIDs[i];
+
+                        Value rv = op->getResult(i);
+                        const Type rt = rv.getType();
+                        if (auto mt = rt.dyn_cast<daphne::MatrixType>())
+                            rv.setType(mt.withSparsityPatternID(sparsityPatternID));
                     }
                 }
             }
@@ -550,6 +652,38 @@ class InferencePass : public PassWrapper<InferencePass, OperationPass<func::Func
         return llvm::any_of(op->getResultTypes(), [](Type rt) {
             if (auto mt = rt.dyn_cast<daphne::MatrixType>())
                 return mt.getSymmetric() == BoolOrUnknown::Unknown;
+            return false;
+        });
+    }
+
+    static bool returnsUnknownSortness(Operation *op) {
+        return llvm::any_of(op->getResultTypes(), [](Type rt) {
+            if (auto mt = rt.dyn_cast<daphne::MatrixType>())
+                return mt.getSortness() == MatrixSortness::Unknown;
+            return false;
+        });
+    }
+
+    static bool returnsUnknownMinMax(Operation *op) {
+        return llvm::any_of(op->getResultTypes(), [](Type rt) {
+            if (auto mt = rt.dyn_cast<daphne::MatrixType>())
+                return !mt.getMinValue().has_value() || !mt.getMaxValue().has_value();
+            return false;
+        });
+    }
+
+    static bool returnsUnknownDistinct(Operation *op) {
+        return llvm::any_of(op->getResultTypes(), [](Type rt) {
+            if (auto mt = rt.dyn_cast<daphne::MatrixType>())
+                return mt.getDistinct() == -1;
+            return false;
+        });
+    }
+
+    static bool returnsUnknownSparsityPattern(Operation *op) {
+        return llvm::any_of(op->getResultTypes(), [](Type rt) {
+            if (auto mt = rt.dyn_cast<daphne::MatrixType>())
+                return mt.getSparsityPatternID() == -1;
             return false;
         });
     }

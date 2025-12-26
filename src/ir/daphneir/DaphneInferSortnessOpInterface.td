@@ -14,12 +14,22 @@
  * limitations under the License.
  */
 
-#pragma once
+#ifndef SRC_IR_DAPHNEIR_DAPHNEINFERSORTNESSOPINTERFACE_TD
+#define SRC_IR_DAPHNEIR_DAPHNEINFERSORTNESSOPINTERFACE_TD
 
-/*
- * This header contains custom C++ types used to represent the data properties of DAPHNE data objects (e.g., matrices
- * and frames). These types are used in both, the IR/compiler and the runtime.
- */
+include "mlir/IR/OpBase.td"
 
-enum class BoolOrUnknown { Unknown = -1, False = 0, True = 1 };
-enum class MatrixSortness { Unknown = -1, NotSorted = 0, SortedAsc = 1, SortedDesc = 2, AllEqual = 3 };
+def InferSortnessOpInterface : OpInterface<"InferSortness"> {
+    let description = [{
+        Interface to infer whether the data object(s) returned by an operation are sortness.
+    }];
+
+    let methods = [
+        InterfaceMethod<
+                "Infer whether the output data object(s) are sortness.",
+                "std::vector<MatrixSortness>", "inferSortness", (ins)
+        >
+    ];
+}
+
+#endif // SRC_IR_DAPHNEIR_DAPHNEINFERSORTNESSOPINTERFACE_TD

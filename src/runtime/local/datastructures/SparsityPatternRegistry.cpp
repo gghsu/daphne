@@ -1,5 +1,5 @@
 /*
- * Copyright 2025 The DAPHNE Consortium
+ * Copyright 2021 The DAPHNE Consortium
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,12 +14,10 @@
  * limitations under the License.
  */
 
-#pragma once
+#include "SparsityPatternRegistry.h"
 
-/*
- * This header contains custom C++ types used to represent the data properties of DAPHNE data objects (e.g., matrices
- * and frames). These types are used in both, the IR/compiler and the runtime.
- */
+// Initialize the static atomic counter to 11
+// IDs 0-10 are reserved for special patterns (diagonal, identity, etc.)
+// IDs >= 11 are for runtime-allocated patterns
+std::atomic<size_t> SparsityPatternRegistry::nextPatternID{11};
 
-enum class BoolOrUnknown { Unknown = -1, False = 0, True = 1 };
-enum class MatrixSortness { Unknown = -1, NotSorted = 0, SortedAsc = 1, SortedDesc = 2, AllEqual = 3 };

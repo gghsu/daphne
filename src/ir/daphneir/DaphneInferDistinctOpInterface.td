@@ -14,12 +14,22 @@
  * limitations under the License.
  */
 
-#pragma once
+#ifndef SRC_IR_DAPHNEIR_DAPHNEINFERDISTINCTOPINTERFACE_TD
+#define SRC_IR_DAPHNEIR_DAPHNEINFERDISTINCTOPINTERFACE_TD
 
-/*
- * This header contains custom C++ types used to represent the data properties of DAPHNE data objects (e.g., matrices
- * and frames). These types are used in both, the IR/compiler and the runtime.
- */
+include "mlir/IR/OpBase.td"
 
-enum class BoolOrUnknown { Unknown = -1, False = 0, True = 1 };
-enum class MatrixSortness { Unknown = -1, NotSorted = 0, SortedAsc = 1, SortedDesc = 2, AllEqual = 3 };
+def InferDistinctOpInterface : OpInterface<"InferDistinct"> {
+    let description = [{
+        Interface to infer distinct value counts.
+    }];
+
+    let methods = [
+        InterfaceMethod<
+                "Infer distinct value counts.",
+                "std::vector<ssize_t>", "inferDistinct", (ins)
+        >
+    ];
+}
+
+#endif // SRC_IR_DAPHNEIR_DAPHNEINFERDISTINCTOPINTERFACE_TD

@@ -31,13 +31,18 @@
 namespace mlir::daphne {
 struct InferenceConfig {
     InferenceConfig(bool partialInferenceAllowed, bool typeInference, bool shapeInference, bool frameLabelInference,
-                    bool sparsityInference, bool symmetricInference);
+                    bool sparsityInference, bool sparsityPatternInference, bool symmetricInference, bool sortnessInference, bool minMaxInference,
+                    bool distinctInference);
     bool partialInferenceAllowed;
     bool typeInference;
     bool shapeInference;
     bool frameLabelInference;
     bool sparsityInference;
+    bool sparsityPatternInference;
     bool symmetricInference;
+    bool sortnessInference;
+    bool minMaxInference;
+    bool distinctInference;
 };
 
 // alphabetically sorted list of passes
@@ -49,13 +54,14 @@ std::unique_ptr<Pass> createDistributeComputationsPass();
 std::unique_ptr<Pass> createDistributePipelinesPass();
 std::unique_ptr<Pass> createEwOpLoweringPass();
 std::unique_ptr<Pass> createSparsityExploitationPass();
-std::unique_ptr<Pass> createInferencePass(InferenceConfig cfg = {false, true, true, true, true, true});
+std::unique_ptr<Pass> createInferencePass(InferenceConfig cfg = {false, true, true, true, true, true, true, true, true, true});
 std::unique_ptr<Pass> createRecordPropertiesPass();
 std::unique_ptr<OperationPass<func::FuncOp>> createInsertPropertiesPass(std::string properties_file_path = "");
 std::unique_ptr<Pass> createInsertDaphneContextPass(const DaphneUserConfig &cfg);
 std::unique_ptr<Pass> createLowerToLLVMPass(const DaphneUserConfig &cfg);
 std::unique_ptr<Pass> createManageObjRefsPass();
 std::unique_ptr<Pass> createMapOpLoweringPass();
+std::unique_ptr<Pass> createMapOpLoweringPass(const DaphneUserConfig &cfg);
 std::unique_ptr<OperationPass<ModuleOp>>
 createMatMulOpLoweringPass(bool matmul_tile, int matmul_vec_size_bits = 0,
                            std::vector<unsigned> matmul_fixed_tile_sizes = {}, bool matmul_use_fixed_tile_sizes = false,
@@ -77,6 +83,7 @@ std::unique_ptr<Pass> createTransposeOpLoweringPass();
 std::unique_ptr<Pass> createVectorizeComputationsPass(bool isRestricted);
 std::unique_ptr<Pass> createHorizontalFusionPass();
 std::unique_ptr<Pass> createTransferDataPropertiesPass();
+std::unique_ptr<Pass> createTransferDataPropertiesPass(const DaphneUserConfig &cfg);
 #ifdef USE_CUDA
 std::unique_ptr<Pass> createMarkCUDAOpsPass(const DaphneUserConfig &cfg);
 #endif

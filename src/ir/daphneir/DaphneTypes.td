@@ -57,7 +57,9 @@ def Matrix : Daphne_Type<"Matrix"> {
     // TODO Maybe we should rename "element type" to "value type" everywhere.
     let parameters = (ins
         "::mlir::Type":$elementType,
-        "ssize_t":$numRows, "ssize_t":$numCols, "double":$sparsity, "MatrixRepresentation":$representation, "BoolOrUnknown":$symmetric
+        "ssize_t":$numRows, "ssize_t":$numCols, "double":$sparsity, "MatrixRepresentation":$representation,
+        "BoolOrUnknown":$symmetric, "MatrixSortness":$sortness, "std::optional<double>":$minValue, "std::optional<double>":$maxValue,
+        "ssize_t":$distinct, "ssize_t":$sparsityPatternID
     );
     let genVerifyDecl = 1;
     // NOTE: float needs special treatment for equality check and hashing (epsilon)
@@ -67,7 +69,8 @@ def Matrix : Daphne_Type<"Matrix"> {
         // Creates a MatrixType from mere element type information, with all
         // other parameters reset.
         TypeBuilder<(ins "::mlir::Type":$elementType), [{
-            return Base::get($_ctxt, elementType, -1, -1, -1.0, MatrixRepresentation::Default, BoolOrUnknown::Unknown);
+            return Base::get($_ctxt, elementType, -1, -1, -1.0, MatrixRepresentation::Default, BoolOrUnknown::Unknown,
+            MatrixSortness::Unknown, std::nullopt, std::nullopt, -1, -1);
         }]>,
     ];
 
@@ -77,23 +80,39 @@ def Matrix : Daphne_Type<"Matrix"> {
         // new value.
 
         ::mlir::daphne::MatrixType withElementType(::mlir::Type elementType) {
-            return get(getContext(), elementType, getNumRows(), getNumCols(), getSparsity(), getRepresentation(), getSymmetric());
+            return get(getContext(), elementType, getNumRows(), getNumCols(), getSparsity(), getRepresentation(), getSymmetric(), getSortness(), getMinValue(), getMaxValue(), getDistinct(), getSparsityPatternID());
         }
 
         ::mlir::daphne::MatrixType withShape(ssize_t numRows, ssize_t numCols) {
-            return get(getContext(), getElementType(), numRows, numCols, getSparsity(), getRepresentation(), getSymmetric());
+            return get(getContext(), getElementType(), numRows, numCols, getSparsity(), getRepresentation(), getSymmetric(), getSortness(), getMinValue(), getMaxValue(), getDistinct(), getSparsityPatternID());
         }
 
         ::mlir::daphne::MatrixType withSparsity(double sparsity) {
-            return get(getContext(), getElementType(), getNumRows(), getNumCols(), sparsity, getRepresentation(), getSymmetric());
+            return get(getContext(), getElementType(), getNumRows(), getNumCols(), sparsity, getRepresentation(), getSymmetric(), getSortness(), getMinValue(), getMaxValue(), getDistinct(), getSparsityPatternID());
         }
 
         ::mlir::daphne::MatrixType withRepresentation(::mlir::daphne::MatrixRepresentation rep) {
-            return get(getContext(), getElementType(), getNumRows(), getNumCols(), getSparsity(), rep, getSymmetric());
+            return get(getContext(), getElementType(), getNumRows(), getNumCols(), getSparsity(), rep, getSymmetric(), getSortness(), getMinValue(), getMaxValue(), getDistinct(), getSparsityPatternID());
         }
 
         ::mlir::daphne::MatrixType withSymmetric(BoolOrUnknown symmetric) {
-            return get(getContext(), getElementType(), getNumRows(), getNumCols(), getSparsity(), getRepresentation(), symmetric);
+            return get(getContext(), getElementType(), getNumRows(), getNumCols(), getSparsity(), getRepresentation(), symmetric, getSortness(), getMinValue(), getMaxValue(), getDistinct(), getSparsityPatternID());
+        }
+
+        ::mlir::daphne::MatrixType withSortness(MatrixSortness sortness) {
+            return get(getContext(), getElementType(), getNumRows(), getNumCols(), getSparsity(), getRepresentation(), getSymmetric(), sortness, getMinValue(), getMaxValue(), getDistinct(), getSparsityPatternID());
+        }
+
+        ::mlir::daphne::MatrixType withMinMax(std::optional<double> minValue, std::optional<double> maxValue) {
+            return get(getContext(), getElementType(), getNumRows(), getNumCols(), getSparsity(), getRepresentation(), getSymmetric(), getSortness(), minValue, maxValue, getDistinct(), getSparsityPatternID());
+        }
+
+        ::mlir::daphne::MatrixType withDistinct(ssize_t distinct) {
+            return get(getContext(), getElementType(), getNumRows(), getNumCols(), getSparsity(), getRepresentation(), getSymmetric(), getSortness(), getMinValue(), getMaxValue(), distinct, getSparsityPatternID());
+        }
+
+        ::mlir::daphne::MatrixType withSparsityPatternID(ssize_t sparsityPatternID) {
+            return get(getContext(), getElementType(), getNumRows(), getNumCols(), getSparsity(), getRepresentation(), getSymmetric(), getSortness(), getMinValue(), getMaxValue(), getDistinct(), sparsityPatternID);
         }
 
         // The following methods return a MatrixType preserving the specified
@@ -104,7 +123,7 @@ def Matrix : Daphne_Type<"Matrix"> {
         }
 
         ::mlir::daphne::MatrixType withSameElementTypeAndRepr() {
-            return get(getContext(), getElementType(), -1, -1, -1.0, getRepresentation(), BoolOrUnknown::Unknown);
+            return get(getContext(), getElementType(), -1, -1, -1.0, getRepresentation(), BoolOrUnknown::Unknown, MatrixSortness::Unknown, std::nullopt, std::nullopt, -1, -1) ;
         }
 
         /**
@@ -131,6 +150,19 @@ def Matrix : Daphne_Type<"Matrix"> {
 
             if (other.getSymmetric() != BoolOrUnknown::Unknown
                 && getSymmetric() != other.getSymmetric())
+                return false;
+
+            if (other.getSortness() != MatrixSortness::Unknown
+                && getSortness() != other.getSortness())
+                return false;
+
+            if (other.getMinValue() != std::nullopt && getMinValue() != other.getMinValue())
+                return false;
+
+            if (other.getMaxValue() != std::nullopt && getMaxValue() != other.getMaxValue())
+                return false;
+
+            if (other.getDistinct() != -1 && getDistinct() != other.getDistinct())
                 return false;
 
             return true;

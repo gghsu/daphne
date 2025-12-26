@@ -19,6 +19,7 @@
 #include <runtime/local/datastructures/DataObjectFactory.h>
 #include <runtime/local/datastructures/Matrix.h>
 #include <runtime/local/datastructures/ValueTypeUtils.h>
+#include <runtime/local/datastructures/SparsityPatternRegistry.h>
 
 #include <algorithm>
 #include <iostream>
@@ -98,6 +99,9 @@ template <typename ValueType> class CSRMatrix : public Matrix<ValueType> {
             memset(colIdxs.get(), 0, maxNumNonZeros * sizeof(size_t));
             memset(rowOffsets.get(), 0, (numRows + 1) * sizeof(size_t));
         }
+
+        this->is_sparsityPatternID = true;
+        this->sparsityPatternID = SparsityPatternRegistry::getNewID();
     }
 
     /**
@@ -144,6 +148,10 @@ template <typename ValueType> class CSRMatrix : public Matrix<ValueType> {
         values = src->values;
         colIdxs = src->colIdxs;
         rowOffsets = std::shared_ptr<size_t[]>(src->rowOffsets, src->rowOffsets.get() + rowLowerIncl);
+
+        // Sub-matrix shares the same sparsity pattern structure, so preserve pattern ID
+        this->is_sparsityPatternID = src->is_sparsityPatternID;
+        this->sparsityPatternID = src->sparsityPatternID;
     }
 
     virtual ~CSRMatrix() {
@@ -226,6 +234,9 @@ template <typename ValueType> class CSRMatrix : public Matrix<ValueType> {
     const size_t *getRowOffsets() const { return rowOffsets.get(); }
 
     std::shared_ptr<size_t[]> getRowOffsetsSharedPtr() const { return rowOffsets; }
+
+    void setRowOffsetsSharedPtr(std::shared_ptr<size_t[]> ptr) { rowOffsets = ptr; }
+    void setColIdxsSharedPtr(std::shared_ptr<size_t[]> ptr) { colIdxs = ptr; }
 
     ValueType get(size_t rowIdx, size_t colIdx) const override {
         if (rowIdx >= numRows)

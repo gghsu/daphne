@@ -22,10 +22,14 @@ add_public_tablegen_target(MLIRDaphneOpsEnumsIncGen)
 add_dependencies(mlir-headers MLIRDaphneOpsEnumsIncGen)
 
 add_mlir_interface(DaphneDistributableOpInterface)
+add_mlir_interface(DaphneInferDistinctOpInterface)
 add_mlir_interface(DaphneInferFrameLabelsOpInterface)
+add_mlir_interface(DaphneInferMinMaxOpInterface)
 add_mlir_interface(DaphneInferSymmetricOpInterface)
+add_mlir_interface(DaphneInferSortnessOpInterface)
 add_mlir_interface(DaphneInferShapeOpInterface)
 add_mlir_interface(DaphneInferSparsityOpInterface)
+add_mlir_interface(DaphneInferSparsityPatternOpInterface)
 add_mlir_interface(DaphneInferTypesOpInterface)
 add_mlir_interface(DaphneVectorizableOpInterface)
 
@@ -40,10 +44,14 @@ add_mlir_dialect_library(MLIRDaphne
     Fold.cpp
     Canonicalize.cpp
     DaphneDistributableOpInterface.cpp
+    DaphneInferDistinctOpInterface.cpp
     DaphneInferFrameLabelsOpInterface.cpp
+    DaphneInferMinMaxOpInterface.cpp
     DaphneInferSymmetricOpInterface.cpp
+    DaphneInferSortnessOpInterface.cpp
     DaphneInferShapeOpInterface.cpp
     DaphneInferSparsityOpInterface.cpp
+    DaphneInferSparsityPatternOpInterface.cpp
     DaphneInferTypesOpInterface.cpp
     DaphneVectorizableOpInterface.cpp
 
