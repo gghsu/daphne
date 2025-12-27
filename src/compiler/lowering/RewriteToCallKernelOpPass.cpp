@@ -392,6 +392,75 @@ class KernelReplacement : public RewritePattern {
 
         const KernelCatalog &kc = userConfig.kernelCatalog;
         const std::string opMnemonic = op->getName().stripDialect().data();
+
+        // Check if we need to inject property analysis for this operation
+        if (userConfig.adaptiveAnalyze) {
+            auto it = userConfig.adaptive_map.find(opMnemonic);
+            const std::vector<std::string>* props = (it != userConfig.adaptive_map.end()) ? &it->second : nullptr;
+            if (props != nullptr) {
+                // Find all matrix/frame/column inputs that need analysis
+                SmallVector<Value> inputsToAnalyze;
+                for (Value operand : op->getOperands()) {
+                    Type operandType = operand.getType();
+                    bool isDataStructure = operandType.isa<mlir::daphne::MatrixType>() || 
+                                          operandType.isa<mlir::daphne::FrameType>() || 
+                                          operandType.isa<mlir::daphne::ColumnType>();
+                    if (isDataStructure) {
+                        inputsToAnalyze.push_back(operand);
+                    }
+                }
+
+                // For each input, inject analyzeData call
+                for (Value input : inputsToAnalyze) {
+                    // Determine which properties to analyze
+                    bool analyzeSparsity = false;
+                    bool analyzeSymmetric = false;
+                    bool analyzeSortness = false;
+                    bool analyzeMinMax = false;
+                    bool analyzeDistinct = false;
+                    bool analyzeSparsityPattern = false;
+                    
+                    for (const std::string &propertyName : *props) {
+                        if (propertyName == "sparsity") {
+                            analyzeSparsity = true;
+                        } else if (propertyName == "symmetric") {
+                            analyzeSymmetric = true;
+                        } else if (propertyName == "sortness" || propertyName == "sorted") {
+                            analyzeSortness = true;
+                        } else if (propertyName == "minmax" || propertyName == "min" || propertyName == "max") {
+                            analyzeMinMax = true;
+                        } else if (propertyName == "distinct" || propertyName == "numDistinct" || propertyName == "distinctCount") {
+                            analyzeDistinct = true;
+                        } else if (propertyName == "sparsityPattern") {
+                            analyzeSparsityPattern = true;
+                        }
+                    }
+
+                    // Build arguments for analyzeData kernel call
+                    SmallVector<Value, 8> analyzeDataArgs;
+                    analyzeDataArgs.push_back(input);
+                    analyzeDataArgs.push_back(rewriter.create<daphne::ConstantOp>(loc, analyzeSparsity));
+                    analyzeDataArgs.push_back(rewriter.create<daphne::ConstantOp>(loc, analyzeSymmetric));
+                    analyzeDataArgs.push_back(rewriter.create<daphne::ConstantOp>(loc, analyzeSortness));
+                    analyzeDataArgs.push_back(rewriter.create<daphne::ConstantOp>(loc, analyzeMinMax));
+                    analyzeDataArgs.push_back(rewriter.create<daphne::ConstantOp>(loc, analyzeDistinct));
+                    analyzeDataArgs.push_back(rewriter.create<daphne::ConstantOp>(loc, analyzeSparsityPattern));
+
+                    // Call analyzeData kernel
+                    KernelInfo analyzeDataKernel = kc.getKernelInfos("analyzeData")[0];
+                    usedLibPaths.at(analyzeDataKernel.libPath) = true;
+                    
+                    auto kId = rewriter.create<mlir::arith::ConstantOp>(
+                        loc, rewriter.getI32IntegerAttr(
+                            KernelDispatchMapping::instance().registerKernel(analyzeDataKernel.kernelFuncName, op)));
+                    analyzeDataArgs.push_back(kId);
+                    analyzeDataArgs.push_back(dctx);
+                    
+                    rewriter.create<daphne::CallKernelOp>(loc, analyzeDataKernel.kernelFuncName, analyzeDataArgs, TypeRange{});
+                }
+            }
+        }
+
         std::vector<KernelInfo> kernelInfos = kc.getKernelInfos(opMnemonic);
 
         std::string libPath;
@@ -637,6 +706,79 @@ void RewriteToCallKernelOpPass::runOnOperation() {
     // Determine the DaphneContext valid in the MLIR function being rewritten.
     mlir::Value dctx = CompilerUtils::getDaphneContext(func);
     func->walk([&](daphne::VectorizedPipelineOp vpo) { vpo.getCtxMutable().assign(dctx); });
+
+    // Special handling for MapOp: inject analyzeData before the MapOp executes
+    if (userConfig.adaptiveAnalyze) {
+        const KernelCatalog &kc = userConfig.kernelCatalog;
+        
+        auto it = userConfig.adaptive_map.find("map");
+        const std::vector<std::string>* mapProps = (it != userConfig.adaptive_map.end()) ? &it->second : nullptr;
+        if (mapProps != nullptr) {
+            // Walk through all MapOp operations in the function
+            func.walk([&](daphne::MapOp mapOp) {
+                Location loc = mapOp.getLoc();
+                Value inputData = mapOp->getOperand(0);
+                Type inputType = inputData.getType();
+                
+                // Only analyze Matrix or Frame inputs
+                bool isMatrixOrFrame = inputType.isa<mlir::daphne::MatrixType>() || 
+                                      inputType.isa<mlir::daphne::FrameType>();
+                if (!isMatrixOrFrame) {
+                    return;
+                }
+                
+                // Parse which properties to analyze
+                bool analyzeSparsity = false;
+                bool analyzeSymmetric = false;
+                bool analyzeSortness = false;
+                bool analyzeMinMax = false;
+                bool analyzeDistinct = false;
+                bool analyzeSparsityPattern = false;
+                
+                for (const std::string &propertyName : *mapProps) {
+                    if (propertyName == "sparsity") {
+                        analyzeSparsity = true;
+                    } else if (propertyName == "symmetric") {
+                        analyzeSymmetric = true;
+                    } else if (propertyName == "sortness" || propertyName == "sorted") {
+                        analyzeSortness = true;
+                    } else if (propertyName == "minmax" || propertyName == "min" || propertyName == "max") {
+                        analyzeMinMax = true;
+                    } else if (propertyName == "distinct" || propertyName == "numDistinct" || propertyName == "distinctCount") {
+                        analyzeDistinct = true;
+                    } else if (propertyName == "sparsityPattern") {
+                        analyzeSparsityPattern = true;
+                    }
+                }
+                // Create builder to insert analyzeData call before the MapOp
+                OpBuilder builder(mapOp);
+                builder.setInsertionPoint(mapOp);
+                
+                // Build arguments for analyzeData call
+                SmallVector<Value, 8> analyzeDataArgs;
+                analyzeDataArgs.push_back(inputData);
+                analyzeDataArgs.push_back(builder.create<daphne::ConstantOp>(loc, analyzeSparsity));
+                analyzeDataArgs.push_back(builder.create<daphne::ConstantOp>(loc, analyzeSymmetric));
+                analyzeDataArgs.push_back(builder.create<daphne::ConstantOp>(loc, analyzeSortness));
+                analyzeDataArgs.push_back(builder.create<daphne::ConstantOp>(loc, analyzeMinMax));
+                analyzeDataArgs.push_back(builder.create<daphne::ConstantOp>(loc, analyzeDistinct));
+                analyzeDataArgs.push_back(builder.create<daphne::ConstantOp>(loc, analyzeSparsityPattern));
+
+                // Call analyzeData kernel
+                KernelInfo analyzeDataKernel = kc.getKernelInfos("analyzeData")[0];
+                usedLibPaths.at(analyzeDataKernel.libPath) = true;
+                
+                auto kId = builder.create<mlir::arith::ConstantOp>(
+                    loc, builder.getI32IntegerAttr(
+                        KernelDispatchMapping::instance().registerKernel(analyzeDataKernel.kernelFuncName, mapOp.getOperation())));
+                analyzeDataArgs.push_back(kId);
+                
+                analyzeDataArgs.push_back(dctx);
+                
+                builder.create<daphne::CallKernelOp>(loc, analyzeDataKernel.kernelFuncName, analyzeDataArgs, TypeRange{});
+            });
+        }
+    }
 
     // Apply conversion to CallKernelOps.
     patterns.insert<KernelReplacement, DistributedPipelineKernelReplacement>(&getContext(), dctx, userConfig,
