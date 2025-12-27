@@ -36,6 +36,9 @@ class InlineMapOpLowering : public mlir::OpConversionPattern<mlir::daphne::MapOp
   public:
     using OpConversionPattern::OpConversionPattern;
 
+    InlineMapOpLowering(MLIRContext *ctx, const DaphneUserConfig *cfg)
+        : mlir::OpConversionPattern<mlir::daphne::MapOp>(ctx), cfg_(cfg) {}
+
     mlir::LogicalResult matchAndRewrite(mlir::daphne::MapOp op, OpAdaptor adaptor,
                                         mlir::ConversionPatternRewriter &rewriter) const override {
         auto loc = op->getLoc();
@@ -79,6 +82,9 @@ class InlineMapOpLowering : public mlir::OpConversionPattern<mlir::daphne::MapOp
         rewriter.replaceOp(op, output);
         return mlir::success();
     }
+
+  private:
+    const DaphneUserConfig *cfg_;
 };
 
 namespace {
@@ -91,7 +97,7 @@ namespace {
  * the daphne::MapOp by inlining the produced CallOps from this pass.
  */
 struct MapOpLoweringPass : public mlir::PassWrapper<MapOpLoweringPass, mlir::OperationPass<mlir::ModuleOp>> {
-    explicit MapOpLoweringPass() {}
+    explicit MapOpLoweringPass(const DaphneUserConfig *cfg = nullptr) : cfg_(cfg) {}
 
     void getDependentDialects(mlir::DialectRegistry &registry) const override {
         registry.insert<mlir::LLVM::LLVMDialect, mlir::AffineDialect, mlir::memref::MemRefDialect,
@@ -106,6 +112,9 @@ struct MapOpLoweringPass : public mlir::PassWrapper<MapOpLoweringPass, mlir::Ope
                "Subsequent use of the inlining pass may inline the call to the "
                "UDF.";
     }
+
+  private:
+    const DaphneUserConfig *cfg_;
 };
 } // end anonymous namespace
 
@@ -120,7 +129,7 @@ void MapOpLoweringPass::runOnOperation() {
 
     target.addIllegalOp<mlir::daphne::MapOp>();
 
-    patterns.insert<InlineMapOpLowering>(&getContext());
+    patterns.insert<InlineMapOpLowering>(&getContext(), cfg_);
     auto module = getOperation();
     if (failed(applyPartialConversion(module, target, std::move(patterns)))) {
         signalPassFailure();
@@ -128,3 +137,7 @@ void MapOpLoweringPass::runOnOperation() {
 }
 
 std::unique_ptr<mlir::Pass> mlir::daphne::createMapOpLoweringPass() { return std::make_unique<MapOpLoweringPass>(); }
+
+std::unique_ptr<mlir::Pass> mlir::daphne::createMapOpLoweringPass(const DaphneUserConfig &cfg) {
+    return std::make_unique<MapOpLoweringPass>(&cfg);
+}

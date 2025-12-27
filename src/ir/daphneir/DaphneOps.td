@@ -2130,14 +2130,6 @@ def Daphne_TransferPropertiesOp : Daphne_Op<"transferProperties"> {
     let hasCanonicalizeMethod = 1;
 }
 
-// Combined SIMD-aware min+max over all elements (no vectorization support)
-def Daphne_MinMaxAllSimdOp : Daphne_Op<"minMaxAllSimd"> {
-    let summary = "Computes min and max values of the input matrix; uses SIMD when enabled";
-
-    let arguments = (ins MatrixOrU:$arg);
-    let results = (outs NumScalar:$minValue, NumScalar:$maxValue);
-}
-
 // ****************************************************************************
 // Old operations
 // ****************************************************************************

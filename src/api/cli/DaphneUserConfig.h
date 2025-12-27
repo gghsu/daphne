@@ -90,6 +90,19 @@ struct DaphneUserConfig {
 
     bool force_cuda = false;
 
+    bool automaticallyAnalyzeEverything = false;
+    
+    // Adaptive analysis configuration
+    bool adaptiveAnalyze = false; // enabled via --adaptiveAnalyze
+    std::string adaptive_map_file = "adaptive_map.json";
+    std::map<std::string, std::vector<std::string>> adaptive_map;
+
+    enum class AdaptiveAnalyzeMode { Exact, Approx, EarlyAbort, Simd };
+    AdaptiveAnalyzeMode adaptiveAnalyzeMode = AdaptiveAnalyzeMode::Exact;
+    // approx mode parameters (threshold removed: we always set distinct to approx value)
+    size_t approxNDistinctK = 64;
+    int64_t approxSeed = 1234567890;
+
     SelfSchedulingScheme taskPartitioningScheme = SelfSchedulingScheme::STATIC;
     QueueTypeOption queueSetupScheme = QueueTypeOption::CENTRALIZED;
     VictimSelectionLogic victimSelection = VictimSelectionLogic::SEQPRI;
@@ -113,6 +126,11 @@ struct DaphneUserConfig {
     std::vector<LogConfig> loggers;
     DaphneLogger *log_ptr{};
     float sparsity_threshold = 0.25;
+
+    bool mapDistinctThresholdAdaptive = false;
+    bool mapDistinctThresholdIsRelative = true;
+    double mapDistinctThresholdFraction = 1.0;
+    size_t mapDistinctThresholdAbsolute = 0;
 
 #ifdef USE_CUDA
     // User config holds once context atm for convenience until we have proper

@@ -945,6 +945,40 @@ antlrcpp::Any DaphneDSLBuiltins::build(mlir::Location loc, const std::string &fu
         mlir::Value arg = args[0];
         return static_cast<mlir::Value>(builder.create<mlir::daphne::IsSymmetricOp>(loc, builder.getI1Type(), arg));
     }
+    if (func == "numDistinctCount") {
+        // Check the function receives exactly one argument
+        checkNumArgsExact(loc, func, numArgs, 1);
+
+        // Create the numDistinctCountOp in the IR
+        mlir::Value arg = args[0];
+        return static_cast<mlir::Value>(builder.create<mlir::daphne::NumDistinctCountOp>(loc, utils.sizeType, arg));
+    }
+    if (func == "numDistinctApprox") {
+        // Check the function receives exactly one argument
+        checkNumArgsExact(loc, func, numArgs, 1);
+
+        // Create the numDistinctCountOp in the IR
+        mlir::Value arg = args[0];
+        return static_cast<mlir::Value>(builder.create<mlir::daphne::NumDistinctApproxOp>(loc, utils.sizeType, arg));
+    }
+    if (func == "isSorted") {
+        // Check the function receives exactly one argument
+        checkNumArgsExact(loc, func, numArgs, 1);
+
+        // Create the IsSortedOp in the IR
+        mlir::Value arg = args[0];
+        return static_cast<mlir::Value>(builder.create<mlir::daphne::IsSortedOp>(loc, builder.getI1Type(), arg));
+    }
+    if (func == "minAllSimd") {
+        auto op = builder.create<MinAllSimdOp>(loc, utils.unknownType, args[0]);
+        op->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
+        return CompilerUtils::retValWithInferredType(op);
+    }
+    if (func == "maxAllSimd") {
+        auto op = builder.create<MaxAllSimdOp>(loc, utils.unknownType, args[0]);
+        op->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
+        return CompilerUtils::retValWithInferredType(op);
+    }
 
     // ********************************************************************
     // Extended relational algebra
@@ -1214,6 +1248,18 @@ antlrcpp::Any DaphneDSLBuiltins::build(mlir::Location loc, const std::string &fu
         return builder.create<StopOp>(loc, message).getOperation();
     }
 
+    if (func == "analyzeData") {
+        checkNumArgsBetween(loc, func, numArgs, 6, 6);
+        mlir::Value arg = args[0];
+        mlir::Value analyzeSparsity = utils.castBoolIf(args[1]);
+        mlir::Value analyzeSymmetric = utils.castBoolIf(args[2]);
+        mlir::Value analyzeSortness = utils.castBoolIf(args[3]);
+        mlir::Value analyzeMinMax = utils.castBoolIf(args[4]);
+        mlir::Value analyzeDistinct = utils.castBoolIf(args[5]);  
+
+        return builder.create<AnalyzeDataOp>(loc, arg, analyzeSparsity, analyzeSymmetric, analyzeSortness, analyzeMinMax,analyzeDistinct).getOperation();
+    }
+    
     // --------------------------------------------------------------------
     // Low-level
     // --------------------------------------------------------------------

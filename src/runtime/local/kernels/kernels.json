@@ -2097,9 +2097,19 @@
                 "name": ["CPP"],
                 "instantiations": [
                     [
+                        ["CSRMatrix", "int64_t"],
+                        ["CSRMatrix", "int64_t"],
+                        ["CSRMatrix", "int64_t"]
+                    ],
+                    [
                         ["CSRMatrix", "double"],
                         ["CSRMatrix", "double"],
                         ["DenseMatrix", "double"]
+                    ],
+                    [
+                        ["CSRMatrix", "int64_t"],
+                        ["CSRMatrix", "int64_t"],
+                        ["DenseMatrix", "int64_t"]
                     ],
                     [
                         ["CSRMatrix", "double"],
@@ -2281,6 +2291,51 @@
                     "OR",
                     "BITWISE_AND",
                     "CONCAT"
+                ]
+            },
+            {
+                "name": ["CPP"],
+                "instantiations": [
+                    [
+                        ["CSRMatrix", "float"],
+                        ["CSRMatrix", "float"],
+                        "float"
+                    ],
+                    [
+                        ["CSRMatrix", "double"],
+                        ["CSRMatrix", "double"],
+                        "double"
+                    ],
+                    [
+                        ["CSRMatrix", "int64_t"],
+                        ["CSRMatrix", "int64_t"],
+                        "int64_t"
+                    ],
+                    [
+                        ["CSRMatrix", "int32_t"],
+                        ["CSRMatrix", "int32_t"],
+                        "int32_t"
+                    ],
+                    [
+                        ["CSRMatrix", "uint32_t"],
+                        ["CSRMatrix", "uint32_t"],
+                        "uint32_t"
+                    ],
+                    [
+                        ["CSRMatrix", "uint64_t"],
+                        ["CSRMatrix", "uint64_t"],
+                        "uint64_t"
+                    ]
+                ],
+                "opCodes": [
+                    "ADD",
+                    "SUB",
+                    "MUL",
+                    "DIV",
+                    "POW",
+                    "MOD",
+                    "MIN",
+                    "MAX"
                 ]
             }
         ]
@@ -4354,7 +4409,8 @@
         },
         "instantiations": [
             [["DenseMatrix", "double"], ["DenseMatrix", "double"], "double"],
-            [["DenseMatrix", "int64_t"], ["DenseMatrix", "int64_t"], "int64_t"]
+            [["DenseMatrix", "int64_t"], ["DenseMatrix", "int64_t"], "int64_t"],
+            [["CSRMatrix", "int64_t"], ["CSRMatrix", "int64_t"], "int64_t"]
         ]
     },
     {
@@ -7691,12 +7747,60 @@
                     "name": "arg"
                 },
                 {
+                    "type": "bool",
+                    "name": "is_sparsity"
+                },
+                {
                     "type": "double",
                     "name": "sparsity"
                 },
                 {
+                    "type": "bool",
+                    "name": "is_symmetric"
+                },
+                {
                     "type": "int64_t",
                     "name": "symmetric"
+                },
+                {
+                    "type": "bool",
+                    "name": "is_sortness"
+                },
+                {
+                    "type": "int64_t",
+                    "name": "sortness"
+                },
+                {
+                    "type": "bool",
+                    "name": "is_minValue"
+                },
+                {
+                    "type": "double",
+                    "name": "minValue"
+                },
+                {
+                    "type": "bool",
+                    "name": "is_maxValue"
+                },
+                {
+                    "type": "double",
+                    "name": "maxValue"
+                },
+                {
+                    "type": "bool",
+                    "name": "is_distinct"
+                },
+                {
+                    "type": "int64_t",
+                    "name": "distinct"
+                },
+                {
+                    "type": "bool",
+                    "name": "is_sparsityPatternID"
+                },
+                {
+                    "type": "int64_t",
+                    "name": "sparsityPatternID"
                 }
             ]
         },
@@ -7724,6 +7828,210 @@
             [["CSRMatrix", "size_t"]],
             [["CSRMatrix", "bool"]],
             [["CSRMatrix", "std::string"]]
+        ]
+    },
+    {
+        "kernelTemplate": {
+            "header": "AnalyzeData.h",
+            "opName": "analyzeData",
+            "returnType": "void",
+            "templateParams": [
+                {
+                    "name": "DTArg",
+                    "isDataType": true
+                }
+            ],
+            "runtimeParams": [
+                {
+                    "type": "const DTArg *",
+                    "name": "arg"
+                },
+                {
+                    "type": "bool",
+                    "name": "analyzeSparsity" 
+                },
+                {
+                    "type": "bool",
+                    "name": "analyzeSymmetric"
+                },
+                {
+                    "type": "bool",
+                    "name": "analyzeSortness"
+                },
+                {
+                    "type": "bool", 
+                    "name": "analyzeMinMax"
+                },
+                {
+                    "type": "bool",
+                    "name": "analyzeDistinct"
+                },
+                {
+                    "type": "bool",
+                    "name": "analyzeSparsityPattern"
+                }
+            ]
+        },
+        "instantiations": [
+            [["DenseMatrix", "double"]],
+            [["DenseMatrix", "float"]],
+            [["DenseMatrix", "int64_t"]],
+            [["DenseMatrix", "int32_t"]],
+            [["DenseMatrix", "int8_t"]],
+            [["DenseMatrix", "uint64_t"]],
+            [["DenseMatrix", "uint32_t"]],
+            [["DenseMatrix", "uint8_t"]],
+            [["CSRMatrix", "double"]],
+            [["CSRMatrix", "float"]],
+            [["CSRMatrix", "int64_t"]],
+            [["CSRMatrix", "int32_t"]],
+            [["CSRMatrix", "int8_t"]],
+            [["CSRMatrix", "uint64_t"]],
+            [["CSRMatrix", "uint32_t"]],
+            [["CSRMatrix", "uint8_t"]]
+        ]
+    },
+    {
+        "kernelTemplate": {
+            "header": "NumDistinctCount.h",
+            "opName": "numDistinctCount",
+            "returnType": "int64_t",
+            "templateParams": [
+                {
+                    "name": "DTArg",
+                    "isDataType": true
+                }
+            ],
+            "runtimeParams": [
+                {
+                    "type": "const DTArg *",
+                    "name": "arg"
+                }
+            ]
+        },
+        "instantiations": [
+            [["DenseMatrix", "double"]],
+            [["DenseMatrix", "float"]],
+            [["DenseMatrix", "int64_t"]],
+            [["DenseMatrix", "int32_t"]],
+            [["DenseMatrix", "int8_t"]],
+            [["DenseMatrix", "uint64_t"]],
+            [["DenseMatrix", "uint32_t"]],
+            [["DenseMatrix", "uint8_t"]]
+        ]
+    },
+    {
+        "kernelTemplate": {
+            "header": "NumDistinctApprox.h",
+            "opName": "numDistinctApprox",
+            "returnType": "int64_t",
+            "templateParams": [
+                {
+                    "name": "DTArg",
+                    "isDataType": true
+                }
+            ],
+            "runtimeParams": [
+                {
+                    "type": "const DTArg *",
+                    "name": "arg"
+                },
+                {
+                    "type": "size_t",
+                    "name": "K"
+                },
+                {
+                    "type": "int64_t",
+                    "name": "seed"
+                }
+            ]
+        },
+        "instantiations": [
+            [["DenseMatrix", "double"]],
+            [["DenseMatrix", "float"]],
+            [["DenseMatrix", "int64_t"]],
+            [["DenseMatrix", "int32_t"]],
+            [["DenseMatrix", "int8_t"]],
+            [["DenseMatrix", "uint64_t"]],
+            [["DenseMatrix", "uint32_t"]],
+            [["DenseMatrix", "uint8_t"]]
+        ]
+    },
+    {
+        "kernelTemplate": {
+            "header": "IsSorted.h",
+            "opName": "isSorted",
+            "returnType": "int64_t",
+            "templateParams": [
+                {
+                    "name": "DTArg",
+                    "isDataType": true
+                }
+            ],
+            "runtimeParams": [
+                {
+                    "type": "const DTArg *",
+                    "name": "arg"
+                }
+            ]
+        },
+        "instantiations": [
+            [["DenseMatrix", "double"]],
+            [["DenseMatrix", "int64_t"]]
+        ]
+    },
+    {
+        "kernelTemplate": {
+            "header": "MinAllSimd.h",
+            "opName": "minAllSimd",
+            "returnType": "VTRes",
+            "templateParams": [
+                {
+                    "name": "DTArg",
+                    "isDataType": true
+                },
+                {
+                    "name": "VTRes",
+                    "isDataType": false
+                }
+            ],
+            "runtimeParams": [
+                {
+                    "type": "const DTArg *",
+                    "name": "arg"
+                }
+            ]
+        },
+        "instantiations": [
+            [["DenseMatrix", "double"], "double"],
+            [["DenseMatrix", "float"], "float"]
+        ]
+    },
+    {
+        "kernelTemplate": {
+            "header": "MaxAllSimd.h",
+            "opName": "maxAllSimd",
+            "returnType": "VTRes",
+            "templateParams": [
+                {
+                    "name": "DTArg",
+                    "isDataType": true
+                },
+                {
+                    "name": "VTRes",
+                    "isDataType": false
+                }
+            ],
+            "runtimeParams": [
+                {
+                    "type": "const DTArg *",
+                    "name": "arg"
+                }
+            ]
+        },
+        "instantiations": [
+            [["DenseMatrix", "double"], "double"],
+            [["DenseMatrix", "float"], "float"]
         ]
     }
 ]

@@ -49,11 +49,14 @@
 #include <iostream>
 #include <string>
 #include <unordered_map>
+#include <filesystem>
+#include <fstream>
 
 #include <csetjmp>
 #include <csignal>
 #include <cstring>
 #include <execinfo.h>
+#include <nlohmannjson/json.hpp>
 
 // global logger handle for this executable
 static std::unique_ptr<DaphneLogger> logger;
@@ -372,6 +375,46 @@ int startDAPHNE(int argc, const char **argv, DaphneLibResult *daphneLibRes, int 
                             desc("Enable timing of high-level steps (start-up, parsing, compilation, execution) and "
                                  "print the times to stderr in JSON format"));
 
+    static opt<bool> automaticallyAnalyzeEverything("automaticallyAnalyzeEverything", cat(daphneOptions), desc("If set, DAPHNE will automatically analyze everything."));
+
+    enum AdaptiveAnalyzeModeOpt { aam_exact, aam_approx, aam_early_abort, aam_simd };
+    static opt<AdaptiveAnalyzeModeOpt> adaptiveAnalyze(
+        "adaptiveAnalyze", cat(daphneOptions),
+        desc("Enable adaptive analysis; optional mode value: approx | early_abort | simd | exact (default exact)"),
+        values(
+            // Primary tokens
+            clEnumValN(aam_exact,        "exact",        "Enable adaptive analysis with no special sub-mode (default)"),
+            clEnumValN(aam_approx,      "approx",        "Use approximate distinct to short-circuit"),
+            clEnumValN(aam_early_abort, "early_abort",   "Exact distinct with early stop at cap"),
+            clEnumValN(aam_simd,        "simd",          "Enable SIMD-accelerated min/max analysis for numeric matrices")
+        ),
+        init(aam_exact),
+        ValueOptional
+    );
+    // Adaptive map CLI
+    static opt<string> adaptiveMapFile("adaptive-map-file", cat(daphneOptions),
+        desc("Path to adaptive_map.json (kernel to candidate properties)"), value_desc("filename"), init("adaptive_map.json"));
+    static opt<bool> printAdaptiveMap("print-adaptive-map", cat(daphneOptions),
+        desc("Print the loaded adaptive kernel->property mapping at startup (for verification)"));
+    // approx parameters
+    static opt<unsigned> approxNDistinctK(
+        "approx-ndistinct-k", cat(daphneOptions),
+        desc("Sketch size K used by numDistinctApprox (power of two recommended, default 64)"), init(64));
+    static opt<long long> approxSeed(
+        "approx-seed", cat(daphneOptions),
+        desc("Seed for approximate algorithms (default 1234567890)"), init(1234567890LL));
+
+    // Map kernel threshold
+    static opt<double> mapDistinctThresholdFraction(
+        "map-distinct-threshold-fraction", cat(daphneOptions),
+        desc("Relative threshold (0..1) for Map cache mode based on distinct fraction (default 0.20)"), init(0.20));
+    static opt<unsigned> mapDistinctThresholdAbsolute(
+        "map-distinct-threshold-absolute", cat(daphneOptions),
+        desc("Absolute threshold (#distinct) for Map cache mode; providing this switches to absolute mode"), init(0));
+    // Adaptive cost-model-based threshold (DV*) for Map kernel
+    static opt<bool> mapDistinctThresholdAdaptive(
+        "map-distinct-threshold-adaptive", cat(daphneOptions),
+        desc("Use adaptive cost-model DV* threshold for Map cache decision (overrides static thresholds when set)"));
     // Positional arguments ---------------------------------------------------
 
     static opt<string> inputFile(Positional, desc("script"), Required);
@@ -557,6 +600,33 @@ int startDAPHNE(int argc, const char **argv, DaphneLibResult *daphneLibRes, int 
                                  "specify at most one of them");
 
     user_config.enable_statistics = enableStatistics;
+    user_config.automaticallyAnalyzeEverything = automaticallyAnalyzeEverything;
+    user_config.adaptive_map_file = adaptiveMapFile.getValue();
+
+    const bool adaptiveAnalyzePresent = adaptiveAnalyze.getNumOccurrences() > 0;
+    user_config.adaptiveAnalyze = adaptiveAnalyzePresent;
+    AdaptiveAnalyzeModeOpt effectiveMode = (AdaptiveAnalyzeModeOpt) adaptiveAnalyze;
+    switch (effectiveMode) {
+        case aam_approx:      user_config.adaptiveAnalyzeMode = DaphneUserConfig::AdaptiveAnalyzeMode::Approx; break;
+        case aam_early_abort: user_config.adaptiveAnalyzeMode = DaphneUserConfig::AdaptiveAnalyzeMode::EarlyAbort; break;
+        case aam_simd:        user_config.adaptiveAnalyzeMode = DaphneUserConfig::AdaptiveAnalyzeMode::Simd; break;
+        case aam_exact: default: user_config.adaptiveAnalyzeMode = DaphneUserConfig::AdaptiveAnalyzeMode::Exact; break;
+    }
+    user_config.approxNDistinctK = approxNDistinctK;
+    user_config.approxSeed = static_cast<int64_t>(approxSeed);
+
+    const bool mapAbsProvided = mapDistinctThresholdAbsolute.getNumOccurrences() > 0;
+    const bool mapFracProvided = mapDistinctThresholdFraction.getNumOccurrences() > 0;
+    if (mapAbsProvided) {
+        user_config.mapDistinctThresholdIsRelative = false;
+        user_config.mapDistinctThresholdAbsolute = static_cast<size_t>(mapDistinctThresholdAbsolute);
+    } else if (mapFracProvided) {
+        user_config.mapDistinctThresholdIsRelative = true;
+        user_config.mapDistinctThresholdFraction = static_cast<double>(mapDistinctThresholdFraction);
+    }
+
+    // Wire adaptive threshold toggle
+    user_config.mapDistinctThresholdAdaptive = mapDistinctThresholdAdaptive;
 
     if (user_config.use_distributed && distributedBackEndSetup == ALLOCATION_TYPE::DIST_MPI) {
 #ifndef USE_MPI
@@ -621,6 +691,54 @@ int startDAPHNE(int argc, const char **argv, DaphneLibResult *daphneLibRes, int 
 
     // Creates an MLIR context and loads the required MLIR dialects.
     DaphneIrExecutor executor(selectMatrixRepr, user_config);
+
+    // Load adaptive map if requested
+    if(user_config.adaptiveAnalyze) {
+        try {
+            std::filesystem::path pathArg(user_config.adaptive_map_file);
+            std::filesystem::path resolved = pathArg;
+            if(!resolved.is_absolute()) {
+                std::filesystem::path libCandidate = std::filesystem::path(user_config.libdir) / pathArg;
+                if(std::filesystem::exists(libCandidate))
+                    resolved = libCandidate;
+            }
+
+            std::ifstream amifs(resolved);
+            if(!amifs.good()) {
+                spdlog::warn("adaptiveAnalyze enabled but cannot open adaptive map file: {}", resolved.string());
+            } else {
+                nlohmann::json j = nlohmann::json::parse(amifs);
+                std::unordered_map<std::string, std::vector<std::string>> amap;
+                if(j.is_object()) {
+                    for(auto it = j.begin(); it != j.end(); ++it) {
+                        if(it.value().is_array()) {
+                            std::vector<std::string> props;
+                            for(const auto &v : it.value()) if(v.is_string()) props.push_back(v.get<std::string>());
+                            amap.emplace(it.key(), std::move(props));
+                        }
+                    }
+                }
+                executor.setAdaptiveMap(std::move(amap));
+
+                if (printAdaptiveMap) {
+                    nlohmann::json out = nlohmann::json::object();
+                    for (const auto &kv : executor.getAdaptiveMap()) {
+                        out[kv.first] = kv.second;
+                    }
+                    std::cerr << "[adaptiveAnalyze] Loaded adaptive map from '" << resolved.string() << "': "
+                              << out.dump() << std::endl;
+                }
+
+                user_config.adaptive_map.clear();
+                for (const auto &kv : executor.getAdaptiveMap()) {
+                    user_config.adaptive_map.emplace(kv.first, kv.second);
+                }
+            }
+        } catch(const std::exception &e) {
+            spdlog::warn("Failed to load adaptive map: {}", e.what());
+        }
+    }
+
     mlir::MLIRContext *mctx = executor.getContext();
 
     // ************************************************************************

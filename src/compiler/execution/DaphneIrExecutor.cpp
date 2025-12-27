@@ -82,6 +82,14 @@ bool DaphneIrExecutor::runPasses(mlir::ModuleOp module) {
     if (!module)
         return false;
 
+    // Ensure userConfig_ carries the adaptive map loaded earlier (if any),
+    // so that passes can access it via the config reference.
+    if (!adaptiveMap_.empty()) {
+        userConfig_.adaptive_map.clear();
+        for (const auto &kv : adaptiveMap_)
+            userConfig_.adaptive_map.emplace(kv.first, kv.second);
+    }
+
     // This flag is really useful to figure out why the lowering failed
     llvm::DebugFlag = userConfig_.debug_llvm;
 
@@ -120,9 +128,11 @@ bool DaphneIrExecutor::runPasses(mlir::ModuleOp module) {
     if (userConfig_.enable_property_recording)
         pm.addPass(mlir::daphne::createRecordPropertiesPass());
     if (userConfig_.enable_property_insert) {
-        pm.addPass(mlir::daphne::createInsertPropertiesPass(userConfig_.properties_file_path));
         pm.addNestedPass<mlir::func::FuncOp>(mlir::daphne::createInferencePass());
         pm.addNestedPass<mlir::func::FuncOp>(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::daphne::createInsertPropertiesPass(userConfig_.properties_file_path));
+        // Insert TransferPropertiesOp to propagate compile-time properties to runtime
+        pm.addNestedPass<mlir::func::FuncOp>(mlir::daphne::createTransferDataPropertiesPass(userConfig_));
     }
 
     if (userConfig_.use_columnar) {
@@ -148,7 +158,7 @@ bool DaphneIrExecutor::runPasses(mlir::ModuleOp module) {
     if (userConfig_.explain_select_matrix_repr)
         pm.addPass(mlir::daphne::createPrintIRPass("IR after selecting matrix representations:"));
 
-    pm.addNestedPass<mlir::func::FuncOp>(mlir::daphne::createTransferDataPropertiesPass());
+    pm.addNestedPass<mlir::func::FuncOp>(mlir::daphne::createTransferDataPropertiesPass(userConfig_));
     if (userConfig_.explain_transfer_data_props)
         pm.addPass(mlir::daphne::createPrintIRPass("IR after transferring data properties:"));
 
@@ -298,7 +308,7 @@ void DaphneIrExecutor::buildCodegenPipeline(mlir::PassManager &pm) {
     pm.addPass(mlir::daphne::createEwOpLoweringPass());
     pm.addPass(mlir::daphne::createAggAllOpLoweringPass());
     pm.addPass(mlir::daphne::createAggDimOpLoweringPass());
-    pm.addPass(mlir::daphne::createMapOpLoweringPass());
+    pm.addPass(mlir::daphne::createMapOpLoweringPass(userConfig_));
     pm.addPass(mlir::daphne::createTransposeOpLoweringPass());
     pm.addPass(mlir::createInlinerPass());
 

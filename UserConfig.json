@@ -83,5 +83,10 @@
             "format": "%^[%n %L]:%$ %v"
         }
     ],
-    "sparsity_threshold": 0.25
+    "sparsity_threshold": 0.25,
+    "automaticallyAnalyzeEverything": false,
+    "mapDistinctThresholdAdaptive": false,
+    "mapDistinctThresholdIsRelative": true,
+    "mapDistinctThresholdFraction": 1.0,
+    "mapDistinctThresholdAbsolute": 0
 }
