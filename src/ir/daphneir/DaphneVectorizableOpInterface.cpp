@@ -318,6 +318,12 @@ std::vector<daphne::VectorCombine> daphne::AllAggMinOp::getVectorCombines() { re
 IMPL_SPLIT_COMBINE_ALLAGG(AllAggMaxOp)
 std::vector<daphne::VectorCombine> daphne::AllAggMaxOp::getVectorCombines() { return {daphne::VectorCombine::MAX}; }
 
+// SIMD-optimized aggregation ops (same split/combine as AllAgg)
+IMPL_SPLIT_COMBINE_ALLAGG(MinAllSimdOp)
+std::vector<daphne::VectorCombine> daphne::MinAllSimdOp::getVectorCombines() { return {daphne::VectorCombine::MIN}; }
+IMPL_SPLIT_COMBINE_ALLAGG(MaxAllSimdOp)
+std::vector<daphne::VectorCombine> daphne::MaxAllSimdOp::getVectorCombines() { return {daphne::VectorCombine::MAX}; }
+
 #undef IMPL_SPLIT_COMBINE_ALLAGG
 
 // ----------------------------------------------------------------------------
