@@ -1057,8 +1057,7 @@ def Daphne_SoftmaxOp : Daphne_Op<"Softmax", [ DataTypeFromFirstArg, ValueTypeFro
 // ****************************************************************************
 
 def Daphne_DiagVectorOp : Daphne_Op<"diagVector", [
-    TypeFromFirstArg, NumRowsFromArg, OneCol,
-    DeclareOpInterfaceMethods<InferSparsityPatternOpInterface>
+    TypeFromFirstArg, NumRowsFromArg, OneCol
 ]> {
     let arguments = (ins MatrixOrU:$arg);
     let results = (outs MatrixOrU:$res);

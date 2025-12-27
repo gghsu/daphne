@@ -23,6 +23,9 @@
 #include <runtime/local/datastructures/CSRMatrix.h>
 #include <runtime/local/datastructures/DataObjectFactory.h>
 #include <runtime/local/datastructures/DenseMatrix.h>
+#include <ir/daphneir/DataPropertyTypes.h>
+#include <unordered_set>
+#include <limits>
 
 // ****************************************************************************
 // Struct for partial template specialization
@@ -54,13 +57,70 @@ template <typename VT> struct RecordProperties<DenseMatrix<VT>> {
         const size_t numCols = arg->getNumCols();
 
         size_t nnz = 0;
-        for (size_t r = 0; r < numRows; r++)
-            for (size_t c = 0; c < numCols; c++)
-                if (arg->get(r, c) != 0)
+        std::unordered_set<VT> distinctValues;
+        double minValue = std::numeric_limits<double>::max();
+        double maxValue = std::numeric_limits<double>::lowest();
+        MatrixSortness sortness = MatrixSortness::Unknown;
+        
+        // ollect statistics
+        for (size_t r = 0; r < numRows; r++) {
+            for (size_t c = 0; c < numCols; c++) {
+                VT val = arg->get(r, c);
+                if (val != 0) {
                     nnz++;
+                }
+                distinctValues.insert(val);
+                minValue = std::min(minValue, static_cast<double>(val));
+                maxValue = std::max(maxValue, static_cast<double>(val));
+            }
+        }
+
+        // Check sortness (column-wise)
+        if (numRows > 1 && numCols > 0) {
+            bool isAscending = true;
+            bool isDescending = true;
+            bool isAllEqual = true;
+            
+            VT prev = arg->get(0, 0);
+            
+            for (size_t r = 1; r < numRows; r++) {
+                VT curr = arg->get(r, 0); 
+                
+                if (curr != prev)
+                    isAllEqual = false;
+                if (curr < prev)
+                    isAscending = false;
+                if (curr > prev)
+                    isDescending = false;
+                    
+                // Early termination
+                if (!isAscending && !isDescending && !isAllEqual)
+                    break;
+                    
+                prev = curr;
+            }
+            
+            if (isAllEqual) {
+                sortness = MatrixSortness::AllEqual;
+            } else if (isAscending) {
+                sortness = MatrixSortness::SortedAsc;
+            } else if (isDescending) {
+                sortness = MatrixSortness::SortedDesc;
+            } else {
+                sortness = MatrixSortness::NotSorted;
+            }
+        } else if (numRows <= 1) {
+            sortness = MatrixSortness::AllEqual;
+        }
 
         const double sparsity = static_cast<double>(nnz) / (numRows * numCols);
+        const int64_t distinct = static_cast<int64_t>(distinctValues.size());
+        
         ctx->propertyLogger.logProperty(valueId, std::make_unique<SparsityProperty>(sparsity));
+        ctx->propertyLogger.logProperty(valueId, std::make_unique<DistinctProperty>(distinct));
+        ctx->propertyLogger.logProperty(valueId, std::make_unique<MinValueProperty>(minValue));
+        ctx->propertyLogger.logProperty(valueId, std::make_unique<MaxValueProperty>(maxValue));
+        ctx->propertyLogger.logProperty(valueId, std::make_unique<SortnessProperty>(static_cast<int64_t>(sortness)));
     }
 };
 

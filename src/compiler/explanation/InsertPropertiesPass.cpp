@@ -16,6 +16,7 @@
 
 #include <ir/daphneir/Daphne.h>
 #include <ir/daphneir/Passes.h>
+#include <ir/daphneir/DataPropertyTypes.h>
 
 #include <llvm/Support/Casting.h>
 #include <llvm/Support/raw_ostream.h>
@@ -95,51 +96,71 @@ void InsertPropertiesPass::runOnOperation() {
         for (size_t i = 0; i < numResults && propertyIndex < properties.size(); ++i) {
             Value res = op->getResult(i);
             nlohmann::json &prop = properties[propertyIndex].properties;
+            
+            auto mt = res.getType().dyn_cast<daphne::MatrixType>();
+            if (!mt)
+                continue;
+            
+            // Collect all properties into finalType
+            daphne::MatrixType finalType = mt;
+            bool hasProperties = false;
+            
             auto it = prop.begin();
             while (it != prop.end()) {
                 const std::string &key = it.key();
                 const nlohmann::json &value = it.value();
-                if (key == "sparsity") {
-                    if (value.is_null()) {
-                        llvm::errs() << "error: 'sparsity' is null for property index " << propertyIndex << "\n";
-                        ++it;
-                        continue;
-                    } else if (!value.is_number()) {
-                        llvm::errs() << "error: 'sparsity' is not a number for property index " << propertyIndex
-                                     << "\n";
-                        ++it;
-                        continue;
-                    }
-
-                    if (auto mt = res.getType().dyn_cast<daphne::MatrixType>()) {
-                        double sparsity = value.get<double>();
-                        if ((llvm::isa<scf::ForOp>(op) || llvm::isa<scf::WhileOp>(op) || llvm::isa<scf::IfOp>(op))) {
-                            builder.setInsertionPointAfter(op);
-                            builder.create<daphne::CastOp>(op->getLoc(), mt.withSparsity(sparsity), res);
-                        } else {
-                            for (auto &use : res.getUses()) {
-                                Operation *userOp = use.getOwner();
-                                if (isa<scf::ForOp>(userOp) || isa<scf::IfOp>(userOp) || isa<scf::WhileOp>(userOp)) {
-                                    auto key = std::make_pair(res, userOp);
-
-                                    Value castOpValue;
-                                    if (castOpMap.count(key)) {
-                                        castOpValue = castOpMap[key];
-                                    } else {
-                                        builder.setInsertionPoint(userOp);
-                                        castOpValue = builder.create<daphne::CastOp>(op->getLoc(), mt, res);
-                                        castOpMap[key] = castOpValue;
-                                    }
-
-                                    userOp->setOperand(use.getOperandNumber(), castOpValue);
-                                }
-                            }
-                        }
-
-                        ++propertyIndex;
-                    }
+                
+                if (key == "sparsity" && value.is_number()) {
+                    finalType = finalType.withSparsity(value.get<double>());
+                    hasProperties = true;
+                } else if (key == "distinct" && value.is_number()) {
+                    finalType = finalType.withDistinct(value.get<int64_t>());
+                    hasProperties = true;
+                } else if (key == "minValue" && value.is_number()) {
+                    finalType = finalType.withMinMax(value.get<double>(), finalType.getMaxValue());
+                    hasProperties = true;
+                } else if (key == "maxValue" && value.is_number()) {
+                    finalType = finalType.withMinMax(finalType.getMinValue(), value.get<double>());
+                    hasProperties = true;
+                } else if (key == "sortness" && value.is_number()) {
+                    finalType = finalType.withSortness(static_cast<MatrixSortness>(value.get<int64_t>()));
+                    hasProperties = true;
                 }
                 ++it;
+            }
+            
+            if (hasProperties) {
+                if ((llvm::isa<scf::ForOp>(op) || llvm::isa<scf::WhileOp>(op) || llvm::isa<scf::IfOp>(op))) {
+                    builder.setInsertionPointAfter(op);
+                    auto castOp = builder.create<daphne::CastOp>(op->getLoc(), finalType, res);
+                    res.replaceAllUsesExcept(castOp.getResult(), castOp);
+                } else {
+                    // Handle loop/if uses with special insertion point
+                    for (auto &use : res.getUses()) {
+                        Operation *userOp = use.getOwner();
+                        if (isa<scf::ForOp>(userOp) || isa<scf::IfOp>(userOp) || isa<scf::WhileOp>(userOp)) {
+                            auto key = std::make_pair(res, userOp);
+                            
+                            Value castOpValue;
+                            if (castOpMap.count(key)) {
+                                castOpValue = castOpMap[key];
+                            } else {
+                                builder.setInsertionPoint(userOp);
+                                castOpValue = builder.create<daphne::CastOp>(op->getLoc(), finalType, res);
+                                castOpMap[key] = castOpValue;
+                            }
+                            
+                            userOp->setOperand(use.getOperandNumber(), castOpValue);
+                        }
+                    }
+                    
+                    // Handle all other uses (non-loop/if)
+                    builder.setInsertionPointAfter(op);
+                    auto castOp = builder.create<daphne::CastOp>(op->getLoc(), finalType, res);
+                    res.replaceAllUsesExcept(castOp.getResult(), castOp);
+                }
+                
+                ++propertyIndex;
             }
         }
     };

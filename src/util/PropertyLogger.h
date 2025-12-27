@@ -55,6 +55,38 @@ struct SparsityProperty : public Property {
     void to_json(nlohmann::json &j) const override { j["sparsity"] = value; }
 };
 
+struct DistinctProperty : public Property {
+    int64_t value;
+
+    DistinctProperty(int64_t val) : value(val) {}
+
+    void to_json(nlohmann::json &j) const override { j["distinct"] = value; }
+};
+
+struct MinValueProperty : public Property {
+    double value;
+
+    MinValueProperty(double val) : value(val) {}
+
+    void to_json(nlohmann::json &j) const override { j["minValue"] = value; }
+};
+
+struct MaxValueProperty : public Property {
+    double value;
+
+    MaxValueProperty(double val) : value(val) {}
+
+    void to_json(nlohmann::json &j) const override { j["maxValue"] = value; }
+};
+
+struct SortnessProperty : public Property {
+    int64_t value;
+
+    SortnessProperty(int64_t val) : value(val) {}
+
+    void to_json(nlohmann::json &j) const override { j["sortness"] = value; }
+};
+
 struct NNZProperty : public Property {
     std::string key;
     size_t value;
