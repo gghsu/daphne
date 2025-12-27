@@ -1,0 +1,41 @@
+/*
+ * Copyright 2021 The DAPHNE Consortium
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+ #ifndef SRC_RUNTIME_LOCAL_KERNELS_NUMDISTINCTCOUNT_H
+ #define SRC_RUNTIME_LOCAL_KERNELS_NUMDISTINCTCOUNT_H
+ 
+ #include <runtime/local/datastructures/DenseMatrix.h>
+ #include <runtime/local/kernels/NumDistinctCount.h> // For numDistinctCount check
+ #include <iostream>
+ #include <unordered_set>
+ #include <cmath>
+ 
+ // AnalyzeData kernel
+ template <typename DT> size_t numDistinctCount(const DT *arg, DCTX(ctx)) {
+    const size_t numRows = arg->getNumRows();
+    const size_t numCols = arg->getNumCols();
+
+    // Compute the exact number of distinct values using a hash set
+    std::unordered_set<typename DT::VT> distinctValues;
+    const auto *values = arg->getValues(); 
+    for (size_t i = 0; i < numRows * numCols; i++) {
+        distinctValues.insert(values[i]);
+    }
+
+    return static_cast<size_t>(distinctValues.size());
+ }
+ 
+ #endif // SRC_RUNTIME_LOCAL_KERNELS_NUMDISTINCTCOUNT_H

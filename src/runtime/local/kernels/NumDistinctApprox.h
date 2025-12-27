@@ -22,20 +22,11 @@
 #include <runtime/local/datastructures/Matrix.h>
 
 #include <util/MurmurHash3.h>
-#include <util/UniqueBoundedSet.h>
 
-#include <bits/stdint-uintn.h>
 #include <chrono>
-#include <functional>
-#include <iterator>
 #include <queue>
-#include <tuple>
-#include <vector>
-
-#include <cctype>
-#include <cstddef>
-#include <cstdint>
-#include <cstdio>
+#include <unordered_set>
+#include <limits>
 
 // ****************************************************************************
 // Struct for partial template specialization
@@ -70,33 +61,48 @@ template <typename VT> struct NumDistinctApprox<DenseMatrix<VT>> {
 
         if (seed == -1)
             seed = std::chrono::high_resolution_clock::now().time_since_epoch().count();
+        if (K == 0) return 0;
 
         const size_t numRows = arg->getNumRows();
         const size_t numCols = arg->getNumCols();
+        const VT *values = arg->getValues();
 
-        UniqueBoundedSet<uint32_t> uBSet(K);
+        std::unordered_set<uint32_t> hashSet;
+        std::priority_queue<uint32_t> maxHeap;
 
         uint32_t hashedValueOut = 0;
+        for (size_t i = 0; i < numRows * numCols; i++) {
+            VT el = values[i];
+            MurmurHash3_x86_32(&el, sizeof(VT), seed, &hashedValueOut);
 
-        for (auto rowIdx = 0ul; rowIdx < numRows; rowIdx++) {
-            for (auto colIdx = 0ul; colIdx < numCols; colIdx++) {
-                auto el = arg->get(rowIdx, colIdx);
-                MurmurHash3_x86_32(&el, sizeof(VT), seed, &hashedValueOut);
-                uBSet.push(hashedValueOut);
+            // already seen this hash
+            if (hashSet.find(hashedValueOut) != hashSet.end()) {
+                continue;
+            }
+
+            if (hashSet.size() < K) {
+                hashSet.insert(hashedValueOut);
+                maxHeap.push(hashedValueOut);
+            } else {
+                // only keep K smallest hashes
+                if (hashedValueOut < maxHeap.top()) {
+                    uint32_t removed = maxHeap.top();
+                    maxHeap.pop();
+                    hashSet.erase(removed);
+                    hashSet.insert(hashedValueOut);
+                    maxHeap.push(hashedValueOut);
+                }
             }
         }
 
-        // When the set is not full, we know exactly how many distinct items are
-        // in there.
-        if (uBSet.size() < K) {
-            return uBSet.size();
+        if (hashSet.size() < K) {
+            return hashSet.size();
         }
 
-        size_t kMinVal = uBSet.top();
+        size_t kMinVal = maxHeap.top();
         const size_t maxVal = std::numeric_limits<std::uint32_t>::max();
-        double kMinValNormed = static_cast<double>(kMinVal) / static_cast<double>(maxVal);
-
-        return static_cast<size_t>(static_cast<double>((K - 1)) / kMinValNormed);
+        double kMinValNormed = (double)kMinVal / (double)maxVal;
+        return (size_t)((K - 1) / kMinValNormed);
     }
 };
 
@@ -114,38 +120,53 @@ template <typename VT> struct NumDistinctApprox<CSRMatrix<VT>> {
         const size_t numCols = arg->getNumCols();
         const size_t numElements = numRows * numCols;
 
-        UniqueBoundedSet<uint32_t> uBSet(K);
+        std::unordered_set<uint32_t> hashSet;
+        std::priority_queue<uint32_t> maxHeap;
+
         uint32_t hashedValueOut = 0;
 
         const size_t numNonZeros = arg->getNumNonZeros();
         if (numElements > numNonZeros) { // at least one zero.
             const VT zero = 0;
             MurmurHash3_x86_32(&zero, sizeof(VT), seed, &hashedValueOut);
-            uBSet.push(hashedValueOut);
+            hashSet.insert(hashedValueOut);
+            maxHeap.push(hashedValueOut);
         }
 
         for (size_t rowIdx = 0; rowIdx < numRows; rowIdx++) {
             const VT *values = arg->getValues(rowIdx);
-
-            const size_t numNonZerosInRow = arg->getNumNonZeros(rowIdx);
-            for (size_t colIdx = 0; colIdx < numNonZerosInRow; colIdx++) {
+            size_t nnzInRow = arg->getNumNonZeros(rowIdx);
+            for (size_t colIdx = 0; colIdx < nnzInRow; colIdx++) {
                 VT el = values[colIdx];
                 MurmurHash3_x86_32(&el, sizeof(VT), seed, &hashedValueOut);
-                uBSet.push(hashedValueOut);
+
+                if (hashSet.find(hashedValueOut) != hashSet.end()) {
+                    continue;
+                }
+
+                if (hashSet.size() < K) {
+                    hashSet.insert(hashedValueOut);
+                    maxHeap.push(hashedValueOut);
+                } else {
+                    if (hashedValueOut < maxHeap.top()) {
+                        uint32_t removed = maxHeap.top();
+                        maxHeap.pop();
+                        hashSet.erase(removed);
+                        hashSet.insert(hashedValueOut);
+                        maxHeap.push(hashedValueOut);
+                    }
+                }
             }
         }
 
-        // When the set is not full, we know exactly how many distinct items are
-        // in there.
-        if (uBSet.size() < K) {
-            return uBSet.size();
+        if (hashSet.size() < K) {
+            return hashSet.size();
         }
 
-        size_t kMinVal = uBSet.top();
+        size_t kMinVal = maxHeap.top();
         const size_t maxVal = std::numeric_limits<std::uint32_t>::max();
-        double kMinValNormed = static_cast<double>(kMinVal) / static_cast<double>(maxVal);
-
-        return static_cast<size_t>(static_cast<double>((K - 1)) / kMinValNormed);
+        double kMinValNormed = (double)kMinVal / (double)maxVal;
+        return (size_t)((K - 1) / kMinValNormed);
     }
 };
 
@@ -161,26 +182,41 @@ template <typename VT> struct NumDistinctApprox<Matrix<VT>> {
         const size_t numRows = arg->getNumRows();
         const size_t numCols = arg->getNumCols();
 
-        UniqueBoundedSet<uint32_t> uBSet(K);
-        uint32_t hashedValueOut = 0;
+        std::unordered_set<uint32_t> hashSet;
+        std::priority_queue<uint32_t> maxHeap;
 
-        for (size_t rowIdx = 0; rowIdx < numRows; ++rowIdx) {
-            for (size_t colIdx = 0; colIdx < numCols; ++colIdx) {
-                VT argVal = arg->get(rowIdx, colIdx);
-                MurmurHash3_x86_32(&argVal, sizeof(VT), seed, &hashedValueOut);
-                uBSet.push(hashedValueOut);
+        uint32_t hashedValueOut = 0;
+        for (size_t rowIdx = 0; rowIdx < numRows; rowIdx++) {
+            for (size_t colIdx = 0; colIdx < numCols; colIdx++) {
+                VT el = arg->get(rowIdx, colIdx);
+                MurmurHash3_x86_32(&el, sizeof(VT), seed, &hashedValueOut);
+
+                if (hashSet.find(hashedValueOut) != hashSet.end()) {
+                    continue;
+                }
+
+                if (hashSet.size() < K) {
+                    hashSet.insert(hashedValueOut);
+                    maxHeap.push(hashedValueOut);
+                } else {
+                    if (hashedValueOut < maxHeap.top()) {
+                        uint32_t removed = maxHeap.top();
+                        maxHeap.pop();
+                        hashSet.erase(removed);
+                        hashSet.insert(hashedValueOut);
+                        maxHeap.push(hashedValueOut);
+                    }
+                }
             }
         }
 
-        // When the set is not full, we know exactly how many distinct items are
-        // in there.
-        if (uBSet.size() < K)
-            return uBSet.size();
+        if (hashSet.size() < K) {
+            return hashSet.size();
+        }
 
-        size_t kMinVal = uBSet.top();
+        size_t kMinVal = maxHeap.top();
         const size_t maxVal = std::numeric_limits<std::uint32_t>::max();
-        double kMinValNormed = static_cast<double>(kMinVal) / static_cast<double>(maxVal);
-
-        return static_cast<size_t>(static_cast<double>((K - 1)) / kMinValNormed);
+        double kMinValNormed = (double)kMinVal / (double)maxVal;
+        return (size_t)((K - 1) / kMinValNormed);
     }
 };
