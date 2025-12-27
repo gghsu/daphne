@@ -15,8 +15,8 @@
 libMyKernels.so: myKernels.o
 	g++ -shared myKernels.o -o libMyKernels.so
 
-myKernels.o: myKernels.cpp
-	g++ -c -fPIC myKernels.cpp -I../../../../src/ -std=c++17 -O3 -mavx2 -o myKernels.o
+myKernels.o: myKernels.cpp PiggybackAnalysis.h
+	g++ -c -fPIC myKernels.cpp -I../../../../src/ -I../../../../thirdparty/installed/include -DSPDLOG_FMT_EXTERNAL -std=c++17 -O3 -mavx2 -o myKernels.o
     
 clean:
 	rm -rf myKernels.o libMyKernels.so

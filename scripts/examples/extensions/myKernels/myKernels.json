@@ -5,13 +5,165 @@
     "resTypes": ["float"],
     "argTypes": ["DenseMatrix<float>"],
     "backend": "CPP",
-    "libPath": "libMyKernels.so"
+    "libPath": "/daphne/scripts/examples/extensions/myKernels/libMyKernels.so"
   },
   {
     "opMnemonic": "sumAll",
     "kernelFuncName": "mySumSIMD",
     "resTypes": ["float"],
     "argTypes": ["DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "minAll",
+    "kernelFuncName": "myMinSIMD",
+    "resTypes": ["float"],
+    "argTypes": ["DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "maxAll",
+    "kernelFuncName": "myMaxSIMD",
+    "resTypes": ["float"],
+    "argTypes": ["DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewMul",
+    "kernelFuncName": "myEwMulFloat",
+    "resTypes": ["DenseMatrix<float>"],
+    "argTypes": ["DenseMatrix<float>", "DenseMatrix<float>", "bool", "bool"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewMul",
+    "kernelFuncName": "myEwMulDouble",
+    "resTypes": ["DenseMatrix<double>"],
+    "argTypes": ["DenseMatrix<double>", "DenseMatrix<double>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewAdd",
+    "kernelFuncName": "myEwAdd",
+    "resTypes": ["DenseMatrix<float>"],
+    "argTypes": ["DenseMatrix<float>", "DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewAdd",
+    "kernelFuncName": "myEwAddDouble",
+    "resTypes": ["DenseMatrix<double>"],
+    "argTypes": ["DenseMatrix<double>", "DenseMatrix<double>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewAdd",
+    "kernelFuncName": "myEwAddInt64",
+    "resTypes": ["DenseMatrix<int64_t>"],
+    "argTypes": ["DenseMatrix<int64_t>", "DenseMatrix<int64_t>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewSub",
+    "kernelFuncName": "myEwSub",
+    "resTypes": ["DenseMatrix<float>"],
+    "argTypes": ["DenseMatrix<float>", "DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewSub",
+    "kernelFuncName": "myEwSubDouble",
+    "resTypes": ["DenseMatrix<double>"],
+    "argTypes": ["DenseMatrix<double>", "DenseMatrix<double>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewMul",
+    "kernelFuncName": "myEwMul",
+    "resTypes": ["DenseMatrix<float>"],
+    "argTypes": ["DenseMatrix<float>", "DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewMul",
+    "kernelFuncName": "myEwMulDouble",
+    "resTypes": ["DenseMatrix<double>"],
+    "argTypes": ["DenseMatrix<double>", "DenseMatrix<double>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewDiv",
+    "kernelFuncName": "myEwDiv",
+    "resTypes": ["DenseMatrix<float>"],
+    "argTypes": ["DenseMatrix<float>", "DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewDiv",
+    "kernelFuncName": "myEwDivDouble",
+    "resTypes": ["DenseMatrix<double>"],
+    "argTypes": ["DenseMatrix<double>", "DenseMatrix<double>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewSqrt",
+    "kernelFuncName": "myEwSqrt",
+    "resTypes": ["DenseMatrix<float>"],
+    "argTypes": ["DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewSqrt",
+    "kernelFuncName": "myEwSqrtDouble",
+    "resTypes": ["DenseMatrix<double>"],
+    "argTypes": ["DenseMatrix<double>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewAbs",
+    "kernelFuncName": "myEwAbs",
+    "resTypes": ["DenseMatrix<float>"],
+    "argTypes": ["DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewAbs",
+    "kernelFuncName": "myEwAbsDouble",
+    "resTypes": ["DenseMatrix<double>"],
+    "argTypes": ["DenseMatrix<double>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewExp",
+    "kernelFuncName": "myEwExp",
+    "resTypes": ["DenseMatrix<float>"],
+    "argTypes": ["DenseMatrix<float>"],
+    "backend": "CPP",
+    "libPath": "libMyKernels.so"
+  },
+  {
+    "opMnemonic": "ewExp",
+    "kernelFuncName": "myEwExpDouble",
+    "resTypes": ["DenseMatrix<double>"],
+    "argTypes": ["DenseMatrix<double>"],
     "backend": "CPP",
     "libPath": "libMyKernels.so"
   }
