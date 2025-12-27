@@ -198,31 +198,32 @@ struct TransferProperties<DenseMatrix<VT>> {
         }
 
         if(needSortness) {
-            bool usedSimd = false;
             bool useSIMD = userConfig.adaptiveAnalyze && 
                           userConfig.adaptiveAnalyzeMode == DaphneUserConfig::AdaptiveAnalyzeMode::Simd;
             
             // Try SIMD version first if enabled
             if(useSIMD) {
-                int64_t sortResult = 0;
-                if constexpr(std::is_same_v<VT, double>) {
-                    usedSimd = isSortedSimd<DenseMatrix<double>>(
-                        reinterpret_cast<const DenseMatrix<double> *>(arg), sortResult, ctx);
-                }
-                else if constexpr(std::is_same_v<VT, float>) {
-                    usedSimd = isSortedSimd<DenseMatrix<float>>(
-                        reinterpret_cast<const DenseMatrix<float> *>(arg), sortResult, ctx);
-                }
-                
-                if(usedSimd) {
+                try {
+                    int64_t sortResult = 0;
+                    if constexpr(std::is_same_v<VT, double>) {
+                        sortResult = isSortedSimd<DenseMatrix<double>>(
+                            reinterpret_cast<const DenseMatrix<double> *>(arg), ctx);
+                    }
+                    else if constexpr(std::is_same_v<VT, float>) {
+                        sortResult = isSortedSimd<DenseMatrix<float>>(
+                            reinterpret_cast<const DenseMatrix<float> *>(arg), ctx);
+                    }
                     mat->sortness = static_cast<MatrixSortness>(sortResult);
                     mat->is_sortness = true;
                     analyzedAny = true;
+                } catch(const std::runtime_error &) {
+                    // SIMD failed (e.g., wrong size), fall back to regular version
+                    mat->sortness = static_cast<MatrixSortness>(isSorted(arg, ctx));
+                    mat->is_sortness = true;
+                    analyzedAny = true;
                 }
-            }
-            
-            // Fall back to regular version if SIMD not used
-            if(!usedSimd) {
+            } else {
+                // Use regular version
                 mat->sortness = static_cast<MatrixSortness>(isSorted(arg, ctx));
                 mat->is_sortness = true;
                 analyzedAny = true;
@@ -231,28 +232,37 @@ struct TransferProperties<DenseMatrix<VT>> {
 
         if constexpr(std::is_arithmetic_v<VT> && !std::is_same_v<VT, bool>) {
             if(needMin || needMax) {
-                bool usedSimd = false;
                 bool useSIMD = userConfig.adaptiveAnalyze && 
                               userConfig.adaptiveAnalyzeMode == DaphneUserConfig::AdaptiveAnalyzeMode::Simd;
                 
-                // Use SIMD version if enabled
+                // Try SIMD version first if enabled
                 if(useSIMD) {
-                    if(needMin) {
-                        mat->minValue = minAllSimd<DenseMatrix<VT>, VT>(arg, ctx);
-                        mat->is_minValue = true;
-                        analyzedAny = true;
-                        usedSimd = true;
+                    try {
+                        if(needMin) {
+                            mat->minValue = minAllSimd<DenseMatrix<VT>, VT>(arg, ctx);
+                            mat->is_minValue = true;
+                            analyzedAny = true;
+                        }
+                        if(needMax) {
+                            mat->maxValue = maxAllSimd<DenseMatrix<VT>, VT>(arg, ctx);
+                            mat->is_maxValue = true;
+                            analyzedAny = true;
+                        }
+                    } catch(const std::runtime_error &) {
+                        // SIMD failed (e.g., wrong size), fall back to regular version
+                        if(needMin) {
+                            mat->minValue = aggAll<VT, DenseMatrix<VT>>(AggOpCode::MIN, arg, ctx);
+                            mat->is_minValue = true;
+                            analyzedAny = true;
+                        }
+                        if(needMax) {
+                            mat->maxValue = aggAll<VT, DenseMatrix<VT>>(AggOpCode::MAX, arg, ctx);
+                            mat->is_maxValue = true;
+                            analyzedAny = true;
+                        }
                     }
-                    if(needMax) {
-                        mat->maxValue = maxAllSimd<DenseMatrix<VT>, VT>(arg, ctx);
-                        mat->is_maxValue = true;
-                        analyzedAny = true;
-                        usedSimd = true;
-                    }
-                }
-                
-                // Fall back to regular aggregation if SIMD not used
-                if(!usedSimd) {
+                } else {
+                    // Use regular version
                     if(needMin) {
                         mat->minValue = aggAll<VT, DenseMatrix<VT>>(AggOpCode::MIN, arg, ctx);
                         mat->is_minValue = true;
