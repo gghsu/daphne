@@ -18,6 +18,7 @@
 #include "mlir/Dialect/SCF/IR/SCF.h"
 #include "mlir/Support/LogicalResult.h"
 #include <compiler/utils/CompilerUtils.h>
+#include <iostream>
 
 /**
  * @brief Eliminates a `TransferPropertiesOp` if it is the only user of its argument.
@@ -826,5 +827,122 @@ mlir::LogicalResult mlir::daphne::SetColLabelsOp::canonicalize(mlir::daphne::Set
             return mlir::success();
         }
     }
+    return mlir::failure();
+}
+
+mlir::LogicalResult mlir::daphne::EwLtOp::canonicalize(mlir::daphne::EwLtOp op, mlir::PatternRewriter &rewriter) {
+    mlir::Value lhs = op.getLhs();
+    mlir::Value rhs = op.getRhs();
+
+    // Only handle matrix < scalar
+    auto lhsMatrix = lhs.getType().dyn_cast<mlir::daphne::MatrixType>();
+    std::pair<bool, ssize_t> rhsConst = CompilerUtils::isConstant<ssize_t>(rhs);
+    if (!lhsMatrix || !rhsConst.first)
+        return mlir::failure();
+
+    // Get min and max values (should be std::optional<ssize_t>)
+    auto minValueOpt = lhsMatrix.getMinValue();
+    auto maxValueOpt = lhsMatrix.getMaxValue();
+    auto distinctVal = lhsMatrix.getDistinct();
+    ssize_t scalarVal = rhsConst.second;
+
+    // Only proceed if both are known and equal
+    if (minValueOpt.has_value() && maxValueOpt.has_value() && 
+        (minValueOpt.value() > scalarVal ||maxValueOpt.value() < scalarVal)) {
+        ssize_t fillValue = 0;
+
+        ssize_t numRows = lhsMatrix.getNumRows();
+        ssize_t numCols = lhsMatrix.getNumCols();
+        auto elemType = rewriter.getIntegerType(64, /*isSigned=*/true);
+
+        if (numRows < 0 || numCols < 0)
+            return mlir::failure();
+
+        auto shapeType = mlir::daphne::MatrixType::get(
+            lhs.getContext(), elemType, numRows, numCols, lhsMatrix.getSparsity(),
+            lhsMatrix.getRepresentation(), lhsMatrix.getSymmetric(), MatrixSortness::AllEqual,
+            fillValue, fillValue, lhsMatrix.getDistinct(), -1);
+
+        auto fillConst = rewriter.create<mlir::daphne::ConstantOp>(op.getLoc(), fillValue);
+        auto numRowsVal = rewriter.create<mlir::arith::ConstantIndexOp>(op.getLoc(), numRows);
+        auto numColsVal = rewriter.create<mlir::arith::ConstantIndexOp>(op.getLoc(), numCols);
+
+        rewriter.replaceOpWithNewOp<mlir::daphne::FillOp>(op, shapeType, fillConst, numRowsVal, numColsVal);
+        //rewriter.replaceOp(op, fillOp.getResult());
+        return mlir::success();
+    }
+
+    return mlir::failure();
+}
+
+mlir::LogicalResult mlir::daphne::EwNeqOp::canonicalize(mlir::daphne::EwNeqOp op, mlir::PatternRewriter &rewriter) {
+    mlir::Value lhs = op.getLhs();
+    mlir::Value rhs = op.getRhs();
+
+    auto lhsMatrix = lhs.getType().dyn_cast<mlir::daphne::MatrixType>();
+    std::pair<bool, ssize_t> rhsConst = CompilerUtils::isConstant<ssize_t>(rhs);
+    if (!lhsMatrix || !rhsConst.first)
+        return mlir::failure();
+
+    auto minValueOpt = lhsMatrix.getMinValue();
+    auto maxValueOpt = lhsMatrix.getMaxValue();
+    ssize_t scalarVal = rhsConst.second;
+
+    if (minValueOpt.has_value() && maxValueOpt.has_value()) {
+        if (minValueOpt.value() <= scalarVal && maxValueOpt.value() >= scalarVal) {
+            // If the scalar value is within the range, we cannot replace the operation
+            return mlir::failure();
+        }
+        else if (minValueOpt.value() > scalarVal ||maxValueOpt.value() < scalarVal) {
+            ssize_t fillValue = 1;
+
+            // Create a FillOp with the same shape as lhs
+            ssize_t numRows = lhsMatrix.getNumRows();
+            ssize_t numCols = lhsMatrix.getNumCols();
+            auto elemType = rewriter.getIntegerType(64, /*isSigned=*/true);
+
+            // If shape is not known, bail out
+            if (numRows < 0 || numCols < 0)
+                return mlir::failure();
+
+            auto shapeType = mlir::daphne::MatrixType::get(
+                lhs.getContext(), elemType, numRows, numCols, lhsMatrix.getSparsity(),
+                lhsMatrix.getRepresentation(), lhsMatrix.getSymmetric(), MatrixSortness::AllEqual,
+                fillValue, fillValue, lhsMatrix.getDistinct(), -1);
+
+            auto fillConst = rewriter.create<mlir::daphne::ConstantOp>(op.getLoc(), fillValue);
+            auto numRowsVal = rewriter.create<mlir::arith::ConstantIndexOp>(op.getLoc(), numRows);
+            auto numColsVal = rewriter.create<mlir::arith::ConstantIndexOp>(op.getLoc(), numCols);
+
+            rewriter.replaceOpWithNewOp<mlir::daphne::FillOp>(op, shapeType, fillConst, numRowsVal, numColsVal);
+            //rewriter.replaceOp(op, fillOp.getResult());
+            return mlir::success();
+        }
+        else if (minValueOpt.value() == scalarVal && maxValueOpt.value() == scalarVal) {
+            ssize_t fillValue = 0;
+
+            ssize_t numRows = lhsMatrix.getNumRows();
+            ssize_t numCols = lhsMatrix.getNumCols();
+            auto elemType = rewriter.getIntegerType(64, /*isSigned=*/true);
+
+            if (numRows < 0 || numCols < 0)
+                return mlir::failure();
+
+            auto shapeType = mlir::daphne::MatrixType::get(
+                lhs.getContext(), elemType, numRows, numCols, lhsMatrix.getSparsity(),
+                lhsMatrix.getRepresentation(), lhsMatrix.getSymmetric(), MatrixSortness::AllEqual,
+                fillValue, fillValue, lhsMatrix.getDistinct(), -1);
+
+            auto fillConst = rewriter.create<mlir::daphne::ConstantOp>(op.getLoc(), fillValue);
+            auto numRowsVal = rewriter.create<mlir::arith::ConstantIndexOp>(op.getLoc(), numRows);
+            auto numColsVal = rewriter.create<mlir::arith::ConstantIndexOp>(op.getLoc(), numCols);
+
+            rewriter.replaceOpWithNewOp<mlir::daphne::FillOp>(op, shapeType, fillConst, numRowsVal, numColsVal);
+            //rewriter.replaceOp(op, fillOp.getResult());
+            return mlir::success();
+        }
+            
+    }
+
     return mlir::failure();
 }
