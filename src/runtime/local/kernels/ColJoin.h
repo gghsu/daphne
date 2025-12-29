@@ -22,7 +22,9 @@
 
 #include <absl/container/flat_hash_map.h>
 
+#include <chrono>
 #include <cstddef>
+#include <iostream>
 
 // ****************************************************************************
 // Struct for partial template specialization
@@ -58,6 +60,68 @@ struct ColJoin<Column<VTPos>, Column<VTPos>, Column<VTData>, Column<VTData>> {
         const size_t numLhsData = lhsData->getNumRows();
         const size_t numRhsData = rhsData->getNumRows();
 
+        // Check if we should dispatch to a more efficient type
+        if constexpr (std::is_same_v<VTPos, size_t> && std::is_arithmetic_v<VTData>) {
+            // Only try to optimize if VTPos is size_t (the default/generic type) and VTData is numeric
+            if (lhsData->is_minValue && lhsData->is_maxValue) {
+                double range = lhsData->maxValue - lhsData->minValue;
+                
+                // Dispatch to uint32_t if range fits
+                if (range <= 4294967295.0 && numLhsData <= 4294967295ULL) {
+                    Column<uint32_t> *resLhsPos32 = nullptr;
+                    Column<uint32_t> *resRhsPos32 = nullptr;
+                    ColJoin<Column<uint32_t>, Column<uint32_t>, Column<VTData>, Column<VTData>>::apply(
+                        resLhsPos32, resRhsPos32, lhsData, rhsData, numRes, ctx);
+                                        
+                    size_t numRows = resLhsPos32->getNumRows();
+                    
+                    // Convert result back to size_t
+                    if (resLhsPos == nullptr)
+                        resLhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
+                    if (resRhsPos == nullptr)
+                        resRhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
+                    VTPos *valuesResLhs = resLhsPos->getValues();
+                    VTPos *valuesResRhs = resRhsPos->getValues();
+                    const uint32_t *values32Lhs = resLhsPos32->getValues();
+                    const uint32_t *values32Rhs = resRhsPos32->getValues();
+                    for (size_t i = 0; i < numRows; i++) {
+                        valuesResLhs[i] = static_cast<VTPos>(values32Lhs[i]);
+                        valuesResRhs[i] = static_cast<VTPos>(values32Rhs[i]);
+                    }
+                    
+                    DataObjectFactory::destroy(resLhsPos32);
+                    DataObjectFactory::destroy(resRhsPos32);
+                    return;
+                }
+                // Dispatch to uint8_t if range fits
+                else if (range <= 255.0 && numLhsData <= 255ULL) {
+                    Column<uint8_t> *resLhsPos8 = nullptr;
+                    Column<uint8_t> *resRhsPos8 = nullptr;
+                    ColJoin<Column<uint8_t>, Column<uint8_t>, Column<VTData>, Column<VTData>>::apply(
+                        resLhsPos8, resRhsPos8, lhsData, rhsData, numRes, ctx);
+                                        
+                    size_t numRows = resLhsPos8->getNumRows();
+                    
+                    // Convert result back to size_t
+                    if (resLhsPos == nullptr)
+                        resLhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
+                    if (resRhsPos == nullptr)
+                        resRhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
+                    VTPos *valuesResLhs = resLhsPos->getValues();
+                    VTPos *valuesResRhs = resRhsPos->getValues();
+                    const uint8_t *values8Lhs = resLhsPos8->getValues();
+                    const uint8_t *values8Rhs = resRhsPos8->getValues();
+                    for (size_t i = 0; i < numRows; i++) {
+                        valuesResLhs[i] = static_cast<VTPos>(values8Lhs[i]);
+                        valuesResRhs[i] = static_cast<VTPos>(values8Rhs[i]);
+                    }
+                    
+                    DataObjectFactory::destroy(resLhsPos8);
+                    DataObjectFactory::destroy(resRhsPos8);
+                    return;
+                }
+            }
+        }    
         if (numRes == -1)
             // Assuming FK-PK join.
             numRes = numLhsData;

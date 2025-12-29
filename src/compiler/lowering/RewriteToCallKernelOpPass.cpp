@@ -398,14 +398,13 @@ class KernelReplacement : public RewritePattern {
             auto it = userConfig.adaptive_map.find(opMnemonic);
             const std::vector<std::string>* props = (it != userConfig.adaptive_map.end()) ? &it->second : nullptr;
             if (props != nullptr) {
-                // Find all matrix/frame/column inputs that need analysis
+                // collect all matrix/frame/column operands
                 SmallVector<Value> inputsToAnalyze;
                 for (Value operand : op->getOperands()) {
                     Type operandType = operand.getType();
-                    bool isDataStructure = operandType.isa<mlir::daphne::MatrixType>() || 
-                                          operandType.isa<mlir::daphne::FrameType>() || 
-                                          operandType.isa<mlir::daphne::ColumnType>();
-                    if (isDataStructure) {
+                    if (operandType.isa<mlir::daphne::MatrixType>() || 
+                        operandType.isa<mlir::daphne::FrameType>() ||
+                        operandType.isa<mlir::daphne::ColumnType>()) {
                         inputsToAnalyze.push_back(operand);
                     }
                 }
@@ -429,7 +428,7 @@ class KernelReplacement : public RewritePattern {
                             analyzeSortness = true;
                         } else if (propertyName == "minmax" || propertyName == "min" || propertyName == "max") {
                             analyzeMinMax = true;
-                        } else if (propertyName == "distinct" || propertyName == "numDistinct" || propertyName == "distinctCount") {
+                        } else if (propertyName == "distinct" || propertyName == "numDistinct") {
                             analyzeDistinct = true;
                         } else if (propertyName == "sparsityPattern") {
                             analyzeSparsityPattern = true;
@@ -447,16 +446,45 @@ class KernelReplacement : public RewritePattern {
                     analyzeDataArgs.push_back(rewriter.create<daphne::ConstantOp>(loc, analyzeSparsityPattern));
 
                     // Call analyzeData kernel
-                    KernelInfo analyzeDataKernel = kc.getKernelInfos("analyzeData")[0];
-                    usedLibPaths.at(analyzeDataKernel.libPath) = true;
+                    std::vector<KernelInfo> analyzeDataKernels = kc.getKernelInfos("analyzeData");
+                    
+                    SmallVector<mlir::Type, 8> lookupArgTys;
+                    for(Value arg : analyzeDataArgs)
+                        lookupArgTys.push_back(adaptType(arg.getType(), false));
+                    
+                    const KernelInfo *selectedKernel = nullptr;
+                    for (const auto& ki : analyzeDataKernels) {
+                        if (ki.argTypes.size() != lookupArgTys.size())
+                            continue;
+                        
+                        bool match = true;
+                        for (size_t i = 0; i < lookupArgTys.size(); i++) {
+                            if (lookupArgTys[i] != ki.argTypes[i]) {
+                                match = false;
+                                break;
+                            }
+                        }
+                        
+                        if (match) {
+                            selectedKernel = &ki;
+                            break;
+                        }
+                    }
+                    
+                    if (!selectedKernel) {
+                        throw ErrorHandler::compilerError(loc, "RewriteToCallKernelOpPass",
+                                                          "no matching analyzeData kernel found");
+                    }
+                    
+                    usedLibPaths.at(selectedKernel->libPath) = true;
                     
                     auto kId = rewriter.create<mlir::arith::ConstantOp>(
                         loc, rewriter.getI32IntegerAttr(
-                            KernelDispatchMapping::instance().registerKernel(analyzeDataKernel.kernelFuncName, op)));
+                            KernelDispatchMapping::instance().registerKernel(selectedKernel->kernelFuncName, op)));
                     analyzeDataArgs.push_back(kId);
                     analyzeDataArgs.push_back(dctx);
                     
-                    rewriter.create<daphne::CallKernelOp>(loc, analyzeDataKernel.kernelFuncName, analyzeDataArgs, TypeRange{});
+                    rewriter.create<daphne::CallKernelOp>(loc, selectedKernel->kernelFuncName, analyzeDataArgs, TypeRange{});
                 }
             }
         }

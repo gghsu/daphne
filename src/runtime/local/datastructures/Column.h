@@ -19,6 +19,7 @@
 #include <runtime/local/datastructures/DataObjectFactory.h>
 #include <runtime/local/datastructures/Structure.h>
 #include <runtime/local/datastructures/ValueTypeUtils.h>
+#include <ir/daphneir/DataPropertyTypes.h>
 
 #include <iostream>
 #include <memory>
@@ -60,6 +61,16 @@ template <typename ValueType> class Column : public Structure {
     }
 
   public:
+    // Data properties for runtime optimization
+    bool is_minValue = false;
+    double minValue = 0.0;
+    bool is_maxValue = false;
+    double maxValue = 0.0;
+    bool is_sortness = false;
+    MatrixSortness sortness = MatrixSortness::Unknown;
+    bool is_distinct = false;
+    ssize_t distinct = -1;
+
     template <typename NewValueType> using WithValueType = Column<NewValueType>;
 
     /**

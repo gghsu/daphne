@@ -20,6 +20,7 @@
 #include <runtime/local/context/DaphneContext.h>
 #include <runtime/local/datastructures/CSRMatrix.h>
 #include <runtime/local/datastructures/DenseMatrix.h>
+#include <runtime/local/datastructures/Column.h>
 #include <runtime/local/datastructures/SparsityPatternRegistry.h>
 
 #include <runtime/local/kernels/IsSymmetric.h>
@@ -417,5 +418,127 @@ struct TransferProperties<CSRMatrix<VT>> {
                 mat->sparsityPatternID = sparsityPatternID;
             }
         }
+    }
+};
+
+// ----------------------------------------------------------------------------
+// Column
+// ----------------------------------------------------------------------------
+
+template <typename VT>
+struct TransferProperties<Column<VT>> {
+    static void apply(const Column<VT> *arg, bool is_sparsity, double sparsity, bool is_symmetric, int64_t symmetric,
+                      bool is_sortness, int64_t sortness, bool is_minValue, double minValue, bool is_maxValue,
+                      double maxValue, bool is_distinct, ssize_t distinct, bool is_sparsityPatternID, ssize_t sparsityPatternID,
+                      DCTX(ctx), bool specificAnalysis = false) {
+        auto col = const_cast<Column<VT> *>(arg);
+        
+        // Check if we need to analyze properties at runtime
+        const size_t numRows = arg->getNumRows();
+        
+        // Transfer compile-time properties to runtime column
+        if(!specificAnalysis) {
+            if(is_minValue && minValue != -1.0) {
+                col->is_minValue = true;
+                col->minValue = minValue;
+            }
+            
+            if(is_maxValue && maxValue != -1.0) {
+                col->is_maxValue = true;
+                col->maxValue = maxValue;
+            }
+            
+            if(is_sortness) {
+                col->is_sortness = true;
+                col->sortness = static_cast<MatrixSortness>(sortness);
+            }
+            
+            if(is_distinct && distinct != -1) {
+                col->is_distinct = true;
+                col->distinct = distinct;
+            }
+        }
+        
+        const auto &userConfig = ctx->getUserConfig();
+        
+        bool doAutoAnalysis = (!specificAnalysis) && userConfig.automaticallyAnalyzeEverything;
+        bool doSpecificAnalysis = specificAnalysis;
+        if(!doAutoAnalysis && !doSpecificAnalysis) {
+            return; // no analysis needed
+        }
+        
+        // Check which properties need computation
+        bool needSortness  = (doAutoAnalysis || (is_sortness  && !col->is_sortness));
+        bool needMin       = (doAutoAnalysis || (is_minValue  && !col->is_minValue));
+        bool needMax       = (doAutoAnalysis || (is_maxValue  && !col->is_maxValue));
+        bool needDistinct  = (doAutoAnalysis || (is_distinct  && !col->is_distinct));
+        
+        bool analyzedAny = false;
+        auto startTime = std::chrono::steady_clock::now();
+        
+        // Analyze min/max values for Column
+        if constexpr(std::is_arithmetic_v<VT> && !std::is_same_v<VT, bool>) {
+            if(needMin || needMax) {
+                const VT *values = arg->getValues();
+                if(numRows > 0) {
+                    VT minVal = values[0];
+                    VT maxVal = values[0];
+                    
+                    for(size_t i = 1; i < numRows; i++) {
+                        if(values[i] < minVal) minVal = values[i];
+                        if(values[i] > maxVal) maxVal = values[i];
+                    }
+                    
+                    if(needMin) {
+                        col->minValue = static_cast<double>(minVal);
+                        col->is_minValue = true;
+                        analyzedAny = true;
+                    }
+                    if(needMax) {
+                        col->maxValue = static_cast<double>(maxVal);
+                        col->is_maxValue = true;
+                        analyzedAny = true;
+                    }
+                }
+            }
+        }
+        
+        // Analyze sortness for Column
+        if(needSortness && numRows > 0) {
+            const VT *values = arg->getValues();
+            bool isAscending = true;
+            bool isDescending = true;
+            
+            for(size_t i = 1; i < numRows && (isAscending || isDescending); i++) {
+                if(values[i] < values[i-1]) isAscending = false;
+                if(values[i] > values[i-1]) isDescending = false;
+            }
+            
+            if(isAscending && isDescending)
+                col->sortness = MatrixSortness::AllEqual;
+            else if(isAscending)
+                col->sortness = MatrixSortness::SortedAsc;
+            else if(isDescending)
+                col->sortness = MatrixSortness::SortedDesc;
+            else
+                col->sortness = MatrixSortness::NotSorted;
+            
+            col->is_sortness = true;
+            analyzedAny = true;
+        }
+        
+        // Analyze distinct count for Column
+        if(needDistinct && numRows > 0) {
+            const VT *values = arg->getValues();
+            std::unordered_set<VT> uniqueValues;
+            for(size_t i = 0; i < numRows; i++) {
+                uniqueValues.insert(values[i]);
+            }
+            col->distinct = static_cast<ssize_t>(uniqueValues.size());
+            col->is_distinct = true;
+            analyzedAny = true;
+        }
+        
+        if(!analyzedAny) return;
     }
 };

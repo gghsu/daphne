@@ -269,14 +269,21 @@ def FrameOrU : AnyTypeOf<[Frame, Unknown]>;
 def Column : Daphne_Type<"Column"> {
     let summary = "column";
 
-    let parameters = (ins "::mlir::Type":$valueType, "ssize_t":$numRows);
+    let parameters = (ins "::mlir::Type":$valueType, "ssize_t":$numRows,
+                          "std::optional<double>":$minValue, "std::optional<double>":$maxValue);
 
     let genVerifyDecl = 1;
+    // Need custom storage class to handle optional<double> hashing
+    let genStorageClass = 0;
 
     let builders = [
         // Creates a ColumnType from mere value type information, with all other parameters reset.
         TypeBuilder<(ins "::mlir::Type":$valueType), [{
-            return Base::get($_ctxt, valueType, -1);
+            return Base::get($_ctxt, valueType, -1, std::nullopt, std::nullopt);
+        }]>,
+        // Creates a ColumnType with value type and numRows
+        TypeBuilder<(ins "::mlir::Type":$valueType, "ssize_t":$numRows), [{
+            return Base::get($_ctxt, valueType, numRows, std::nullopt, std::nullopt);
         }]>,
     ];
 
@@ -286,11 +293,15 @@ def Column : Daphne_Type<"Column"> {
         // new value.
 
         ::mlir::daphne::ColumnType withValueType(::mlir::Type valueType) {
-            return get(getContext(), valueType, getNumRows());
+            return get(getContext(), valueType, getNumRows(), getMinValue(), getMaxValue());
         }
 
         ::mlir::daphne::ColumnType withShape(ssize_t numRows) {
-            return get(getContext(), getValueType(), numRows);
+            return get(getContext(), getValueType(), numRows, getMinValue(), getMaxValue());
+        }
+
+        ::mlir::daphne::ColumnType withMinMax(std::optional<double> minValue, std::optional<double> maxValue) {
+            return get(getContext(), getValueType(), getNumRows(), minValue, maxValue);
         }
 
         // The following method returns a ColumnType with the same value type

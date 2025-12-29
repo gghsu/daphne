@@ -22,7 +22,9 @@
 
 #include <absl/container/flat_hash_set.h>
 
+#include <chrono>
 #include <cstddef>
+#include <iostream>
 
 // ****************************************************************************
 // Struct for partial template specialization
@@ -57,6 +59,53 @@ template <typename VTData, typename VTPos> struct ColSemiJoin<Column<VTPos>, Col
         const size_t numLhsData = lhsData->getNumRows();
         const size_t numRhsData = rhsData->getNumRows();
 
+        // Check if we should dispatch to a more efficient type
+        if constexpr (std::is_same_v<VTPos, size_t> && std::is_arithmetic_v<VTData>) {
+            // Only try to optimize if VTPos is size_t (the default/generic type) and VTData is numeric
+            if (lhsData->is_minValue && lhsData->is_maxValue) {
+                double range = lhsData->maxValue - lhsData->minValue;
+                
+                // Dispatch to uint32_t if range fits
+                if (range <= 4294967295.0 && numLhsData <= 4294967295ULL) {
+                    Column<uint32_t> *resLhsPos32 = nullptr;
+                    ColSemiJoin<Column<uint32_t>, Column<VTData>, Column<VTData>>::apply(
+                        resLhsPos32, lhsData, rhsData, numRes, ctx);
+                                        
+                    size_t numRows = resLhsPos32->getNumRows();
+                    
+                    // Convert result back to size_t
+                    if (resLhsPos == nullptr)
+                        resLhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
+                    VTPos *valuesRes = resLhsPos->getValues();
+                    const uint32_t *values32 = resLhsPos32->getValues();
+                    for (size_t i = 0; i < numRows; i++)
+                        valuesRes[i] = static_cast<VTPos>(values32[i]);
+                    
+                    DataObjectFactory::destroy(resLhsPos32);
+                    return;
+                }
+                // Dispatch to uint8_t if range fits
+                else if (range <= 255.0 && numLhsData <= 255ULL) {
+                    Column<uint8_t> *resLhsPos8 = nullptr;
+                    ColSemiJoin<Column<uint8_t>, Column<VTData>, Column<VTData>>::apply(
+                        resLhsPos8, lhsData, rhsData, numRes, ctx);
+                                        
+                    size_t numRows = resLhsPos8->getNumRows();
+                    
+                    // Convert result back to size_t
+                    if (resLhsPos == nullptr)
+                        resLhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
+                    VTPos *valuesRes = resLhsPos->getValues();
+                    const uint8_t *values8 = resLhsPos8->getValues();
+                    for (size_t i = 0; i < numRows; i++)
+                        valuesRes[i] = static_cast<VTPos>(values8[i]);
+                    
+                    DataObjectFactory::destroy(resLhsPos8);
+                    return;
+                }
+            }
+        }
+        
         if (numRes == -1)
             // Assuming FK-PK join.
             numRes = numLhsData;
