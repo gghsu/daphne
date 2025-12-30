@@ -46,97 +46,106 @@ struct TransferDataPropertiesPass : public PassWrapper<TransferDataPropertiesPas
     StringRef getArgument() const final { return "transfer-data-props"; }
     StringRef getDescription() const final { return "TODO"; }
 
-    struct MinMaxValues {
-        Value minF64;
-        Value maxF64;
-    };
-
-    void identifyMinMaxTargets(func::FuncOp f);
-    std::optional<MinMaxValues> materializeMinMax(OpBuilder &builder, Location loc, Value matrix,
-                                                  daphne::MatrixType mt);
     void processBlock(OpBuilder builder, Block *b);
-    bool useSimdMinMax() const;
 
     const DaphneUserConfig &userConfig;
-    llvm::DenseSet<Value> minMaxTargets;
+    llvm::DenseSet<Value> processedValues;  // Track which values already have min/max computed
 };
 
 void TransferDataPropertiesPass::runOnOperation() {
     func::FuncOp f = getOperation();
-    minMaxTargets.clear();
-    if (userConfig.use_vectorized_exec)
-        identifyMinMaxTargets(f);
-
+    processedValues.clear();
     OpBuilder builder(f.getContext());
     processBlock(builder, &(f.getBody().front()));
 }
 
-void TransferDataPropertiesPass::identifyMinMaxTargets(func::FuncOp f) {
-    f.walk([&](Operation *op) {
-        if (!isa<mlir::daphne::EwGtOp, mlir::daphne::EwGeOp, mlir::daphne::EwLtOp, mlir::daphne::EwLeOp>(op))
-            return;
-
-        if (op->getNumOperands() < 1)
-            return;
-
-        Value matrixOperand = op->getOperand(0);
-        auto mt = matrixOperand.getType().dyn_cast<daphne::MatrixType>();
-        if (!mt)
-            return;
-
-        if (mt.getMinValue().has_value() && mt.getMaxValue().has_value())
-            return;
-
-        if (!matrixOperand.getDefiningOp())
-            return;
-
-        minMaxTargets.insert(matrixOperand);
-    });
-}
-
-std::optional<TransferDataPropertiesPass::MinMaxValues>
-TransferDataPropertiesPass::materializeMinMax(OpBuilder &builder, Location loc, Value matrix,
-                                              daphne::MatrixType mt) {
-    if (!userConfig.use_vectorized_exec)
-        return std::nullopt;
-    if (!minMaxTargets.contains(matrix))
-        return std::nullopt;
-
-    Type scalarTy = mt.getElementType();
-    Value minScalar;
-    Value maxScalar;
-
-    if (useSimdMinMax()) {
-        auto minOp = builder.create<mlir::daphne::MinAllSimdOp>(loc, scalarTy, matrix);
-        auto maxOp = builder.create<mlir::daphne::MaxAllSimdOp>(loc, scalarTy, matrix);
-        minOp->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
-        maxOp->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
-        minScalar = minOp.getResult();
-        maxScalar = maxOp.getResult();
-    } else {
-        auto minOp = builder.create<mlir::daphne::AllAggMinOp>(loc, scalarTy, matrix);
-        auto maxOp = builder.create<mlir::daphne::AllAggMaxOp>(loc, scalarTy, matrix);
-        minOp->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
-        maxOp->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
-        minScalar = minOp.getResult();
-        maxScalar = maxOp.getResult();
-    }
-
-    Type f64Ty = builder.getF64Type();
-    Value minF64 = builder.create<mlir::daphne::CastOp>(loc, f64Ty, minScalar);
-    Value maxF64 = builder.create<mlir::daphne::CastOp>(loc, f64Ty, maxScalar);
-    return MinMaxValues{minF64, maxF64};
-}
-
-bool TransferDataPropertiesPass::useSimdMinMax() const {
-    return userConfig.adaptiveAnalyze &&
-           userConfig.adaptiveAnalyzeMode == DaphneUserConfig::AdaptiveAnalyzeMode::Simd;
-}
-
 void TransferDataPropertiesPass::processBlock(OpBuilder builder, Block *b) {
     for (Operation &op : b->getOperations()) {
-        builder.setInsertionPointAfter(&op);
         Location loc = op.getLoc();
+        
+        // STEP 1: Check if this operation enables vectorized execution and needs min/max for its inputs
+        if (userConfig.use_vectorized_restricted && userConfig.adaptiveAnalyze) {
+            const std::string opMnemonic = op.getName().stripDialect().str();
+            auto it = userConfig.adaptive_map.find(opMnemonic);
+            
+            if (it != userConfig.adaptive_map.end()) {
+                const auto &props = it->second;
+                bool needsMinMax = std::find(props.begin(), props.end(), "minmax") != props.end();
+                
+                if (needsMinMax) {
+                    // Check each matrix operand
+                    for (Value operand : op.getOperands()) {
+                        auto mt = operand.getType().dyn_cast<daphne::MatrixType>();
+                        if (!mt || processedValues.contains(operand))
+                            continue;
+                        
+                        // Skip if already has compile-time min/max
+                        if (mt.getMinValue().has_value() && mt.getMaxValue().has_value())
+                            continue;
+                        
+                        processedValues.insert(operand);
+                        
+                        // Insert min/max computation BEFORE this operation
+                        builder.setInsertionPoint(&op);
+                        Type scalarTy = mt.getElementType();
+                        
+                        Value minScalar, maxScalar;
+                        if (userConfig.adaptiveAnalyzeMode == DaphneUserConfig::AdaptiveAnalyzeMode::Simd) {
+                            auto minOp = builder.create<mlir::daphne::MinAllSimdOp>(loc, scalarTy, operand);
+                            auto maxOp = builder.create<mlir::daphne::MaxAllSimdOp>(loc, scalarTy, operand);
+                            minOp->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
+                            maxOp->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
+                            minScalar = minOp.getResult();
+                            maxScalar = maxOp.getResult();
+                        } else {
+                            auto minOp = builder.create<mlir::daphne::AllAggMinOp>(loc, scalarTy, operand);
+                            auto maxOp = builder.create<mlir::daphne::AllAggMaxOp>(loc, scalarTy, operand);
+                            minOp->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
+                            maxOp->setAttr(CompilerUtils::ATTR_VEC, builder.getBoolAttr(true));
+                            minScalar = minOp.getResult();
+                            maxScalar = maxOp.getResult();
+                        }
+                        
+                        // Cast to f64 and attach to operand via TransferPropertiesOp
+                        Value minF64 = builder.create<mlir::daphne::CastOp>(loc, builder.getF64Type(), minScalar);
+                        Value maxF64 = builder.create<mlir::daphne::CastOp>(loc, builder.getF64Type(), maxScalar);
+                        
+                        auto coIsMin = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(true));
+                        auto coIsMax = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(true));
+                        
+                        // Preserve other properties
+                        bool isSparsity = mt.getSparsity() != -1.0;
+                        auto coIsSparsity = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(isSparsity));
+                        auto coSparsity = builder.create<daphne::ConstantOp>(loc, isSparsity ? mt.getSparsity() : -1.0);
+                        
+                        bool isSymmetric = mt.getSymmetric() != BoolOrUnknown::Unknown;
+                        auto coIsSymmetric = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(isSymmetric));
+                        auto coSymmetric = builder.create<daphne::ConstantOp>(loc, static_cast<int64_t>(mt.getSymmetric()));
+                        
+                        bool isSortness = mt.getSortness() != MatrixSortness::Unknown;
+                        auto coIsSortness = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(isSortness));
+                        auto coSortness = builder.create<daphne::ConstantOp>(loc, static_cast<int64_t>(mt.getSortness()));
+                        
+                        bool isDistinct = mt.getDistinct() != -1;
+                        auto coIsDistinct = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(isDistinct));
+                        auto coDistinct = builder.create<daphne::ConstantOp>(loc, isDistinct ? mt.getDistinct() : -1);
+                        
+                        bool isSparsityPatternID = mt.getSparsityPatternID() != -1;
+                        auto coIsSparsityPatternID = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(isSparsityPatternID));
+                        auto coSparsityPatternID = builder.create<daphne::ConstantOp>(loc, isSparsityPatternID ? mt.getSparsityPatternID() : -1);
+                        
+                        builder.create<daphne::TransferPropertiesOp>(loc, operand, 
+                            coIsSparsity, coSparsity, coIsSymmetric, coSymmetric,
+                            coIsSortness, coSortness, coIsMin, minF64, coIsMax, maxF64,
+                            coIsDistinct, coDistinct, coIsSparsityPatternID, coSparsityPatternID);
+                    }
+                }
+            }
+        }
+        
+        // STEP 2: Add TransferPropertiesOp for all operation results (standard behavior)
+        builder.setInsertionPointAfter(&op);
+        
         for (Value v : op.getResults()) {
             Type t = v.getType();
             auto mt = t.dyn_cast<daphne::MatrixType>();
@@ -155,16 +164,11 @@ void TransferDataPropertiesPass::processBlock(OpBuilder builder, Block *b) {
             auto coIsSortness = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(isSortness));
             auto coSortness = builder.create<daphne::ConstantOp>(loc, static_cast<int64_t>(mt.getSortness()));
 
-            auto minMaxValues = materializeMinMax(builder, loc, v, mt);
-
             Value coIsMinValue;
             Value coMinValue;
             if (mt.getMinValue().has_value()) {
                 coIsMinValue = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(true));
                 coMinValue = builder.create<daphne::ConstantOp>(loc, static_cast<double>(mt.getMinValue().value()));
-            } else if (minMaxValues) {
-                coIsMinValue = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(true));
-                coMinValue = minMaxValues->minF64;
             } else {
                 coIsMinValue = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(false));
                 coMinValue = builder.create<daphne::ConstantOp>(loc, -1.0);
@@ -175,9 +179,6 @@ void TransferDataPropertiesPass::processBlock(OpBuilder builder, Block *b) {
             if (mt.getMaxValue().has_value()) {
                 coIsMaxValue = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(true));
                 coMaxValue = builder.create<daphne::ConstantOp>(loc, static_cast<double>(mt.getMaxValue().value()));
-            } else if (minMaxValues) {
-                coIsMaxValue = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(true));
-                coMaxValue = minMaxValues->maxF64;
             } else {
                 coIsMaxValue = builder.create<daphne::ConstantOp>(loc, builder.getI1Type(), builder.getBoolAttr(false));
                 coMaxValue = builder.create<daphne::ConstantOp>(loc, -1.0);
