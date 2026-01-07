@@ -1,0 +1,13 @@
+{
+  "ewGt": ["minmax", "sortness"],
+  "ewLt": ["minmax", "sortness"],
+  "ewGe": ["minmax", "sortness"],
+  "ewLe": ["minmax", "sortness"],
+  "ewEq": ["minmax"],
+  "ewNeq": ["minmax"],
+  "map": ["distinct"],
+  "innerJoin": ["sortness"],
+  "colJoin": ["minmax"],
+  "colSemiJoin": ["minmax"],
+  "matMul": ["sparsity"]
+}
