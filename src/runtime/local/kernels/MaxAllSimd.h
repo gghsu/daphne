@@ -67,32 +67,35 @@ struct MaxAllSimd<DenseMatrix<float>, float> {
     static float apply(const DenseMatrix<float> *arg, DCTX(ctx)) {        
         // Validation.
         const size_t numCells = arg->getNumRows() * arg->getNumCols();
-        if(numCells % 8)
-            throw std::runtime_error(
-                "maxAllSimd: for simplicity, the number of cells must be "
-                "a multiple of 8"
-            );
+        if(numCells == 0)
+            throw std::runtime_error("maxAllSimd: matrix must not be empty");
         if(arg->getNumCols() != arg->getRowSkip())
             throw std::runtime_error(
                 "maxAllSimd: for simplicity, the argument must not be "
                 "a column segment of another matrix"
             );
 
-        // SIMD max reduction (8x f32).
         const float *valuesArg = arg->getValues();
-        __m256 vmax = _mm256_loadu_ps(valuesArg);
-        valuesArg += 8;
+        const size_t simdWidth = 8;
+        const size_t numSIMDIters = numCells / simdWidth;
+        const size_t tailStart = numSIMDIters * simdWidth;
         
-        for(size_t i = 8; i < numCells; i += 8) {
-            __m256 v = _mm256_loadu_ps(valuesArg);
+        // SIMD max reduction (8x f32).
+        __m256 vmax = _mm256_set1_ps(std::numeric_limits<float>::lowest());
+        
+        for(size_t i = 0; i < numSIMDIters; i++) {
+            __m256 v = _mm256_loadu_ps(valuesArg + i * simdWidth);
             vmax = _mm256_max_ps(vmax, v);
-            valuesArg += 8;
         }
 
         // Horizontal max of accumulator elements.
         float M = reinterpret_cast<float*>(&vmax)[0];
         for(int i = 1; i < 8; i++)
             M = std::max(M, reinterpret_cast<float*>(&vmax)[i]);
+        
+        // Process tail elements.
+        for(size_t i = tailStart; i < numCells; i++)
+            M = std::max(M, valuesArg[i]);
         
         return M;
     }
@@ -108,32 +111,35 @@ struct MaxAllSimd<DenseMatrix<double>, double> {
     static double apply(const DenseMatrix<double> *arg, DCTX(ctx)) {       
         // Validation.
         const size_t numCells = arg->getNumRows() * arg->getNumCols();
-        if(numCells % 4)
-            throw std::runtime_error(
-                "maxAllSimd: for simplicity, the number of cells must be "
-                "a multiple of 4"
-            );
+        if(numCells == 0)
+            throw std::runtime_error("maxAllSimd: matrix must not be empty");
         if(arg->getNumCols() != arg->getRowSkip())
             throw std::runtime_error(
                 "maxAllSimd: for simplicity, the argument must not be "
                 "a column segment of another matrix"
             );
 
-        // SIMD max reduction (4x f64).
         const double *valuesArg = arg->getValues();
-        __m256d vmax = _mm256_loadu_pd(valuesArg);
-        valuesArg += 4;
+        const size_t simdWidth = 4;
+        const size_t numSIMDIters = numCells / simdWidth;
+        const size_t tailStart = numSIMDIters * simdWidth;
         
-        for(size_t i = 4; i < numCells; i += 4) {
-            __m256d v = _mm256_loadu_pd(valuesArg);
+        // SIMD max reduction (4x f64).
+        __m256d vmax = _mm256_set1_pd(std::numeric_limits<double>::lowest());
+        
+        for(size_t i = 0; i < numSIMDIters; i++) {
+            __m256d v = _mm256_loadu_pd(valuesArg + i * simdWidth);
             vmax = _mm256_max_pd(vmax, v);
-            valuesArg += 4;
         }
         
         // Horizontal max of accumulator elements.
         double M = reinterpret_cast<double*>(&vmax)[0];
         for(int i = 1; i < 4; i++)
             M = std::max(M, reinterpret_cast<double*>(&vmax)[i]);
+        
+        // Process tail elements.
+        for(size_t i = tailStart; i < numCells; i++)
+            M = std::max(M, valuesArg[i]);
         
         return M;
     }

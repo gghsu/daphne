@@ -67,32 +67,36 @@ struct MinAllSimd<DenseMatrix<float>, float> {
     static float apply(const DenseMatrix<float> *arg, DCTX(ctx)) {       
         // Validation.
         const size_t numCells = arg->getNumRows() * arg->getNumCols();
-        if(numCells % 8)
-            throw std::runtime_error(
-                "minAllSimd: for simplicity, the number of cells must be "
-                "a multiple of 8"
-            );
+        if(numCells == 0)
+            throw std::runtime_error("minAllSimd: matrix must not be empty");
         if(arg->getNumCols() != arg->getRowSkip())
             throw std::runtime_error(
                 "minAllSimd: for simplicity, the argument must not be "
                 "a column segment of another matrix"
             );
 
-        // SIMD min reduction (8x f32).
         const float *valuesArg = arg->getValues();
-        __m256 vmin = _mm256_loadu_ps(valuesArg);
-        valuesArg += 8;
+        const size_t simdWidth = 8;
+        const size_t numSIMDIters = numCells / simdWidth;
+        const size_t tailStart = numSIMDIters * simdWidth;
         
-        for(size_t i = 8; i < numCells; i += 8) {
-            __m256 v = _mm256_loadu_ps(valuesArg);
+        // SIMD min reduction (8x f32).
+        __m256 vmin = _mm256_set1_ps(std::numeric_limits<float>::max());
+        
+        for(size_t i = 0; i < numSIMDIters; i++) {
+            __m256 v = _mm256_loadu_ps(valuesArg + i * simdWidth);
             vmin = _mm256_min_ps(vmin, v);
-            valuesArg += 8;
         }
         
         // Horizontal min of accumulator elements.
         float m = reinterpret_cast<float*>(&vmin)[0];
         for(int i = 1; i < 8; i++)
             m = std::min(m, reinterpret_cast<float*>(&vmin)[i]);
+        
+        // Process tail elements (if any).
+        for(size_t i = tailStart; i < numCells; i++)
+            m = std::min(m, valuesArg[i]);
+        
         return m;
     }
 };
@@ -107,32 +111,35 @@ struct MinAllSimd<DenseMatrix<double>, double> {
     static double apply(const DenseMatrix<double> *arg, DCTX(ctx)) {
        // Validation.
         const size_t numCells = arg->getNumRows() * arg->getNumCols();
-        if(numCells % 4)
-            throw std::runtime_error(
-                "minAllSimd: for simplicity, the number of cells must be "
-                "a multiple of 4"
-            );
+        if(numCells == 0)
+            throw std::runtime_error("minAllSimd: matrix must not be empty");
         if(arg->getNumCols() != arg->getRowSkip())
             throw std::runtime_error(
                 "minAllSimd: for simplicity, the argument must not be "
                 "a column segment of another matrix"
             );
 
-        // SIMD min reduction (4x f64).
         const double *valuesArg = arg->getValues();
-        __m256d vmin = _mm256_loadu_pd(valuesArg);
-        valuesArg += 4;
+        const size_t simdWidth = 4;
+        const size_t numSIMDIters = numCells / simdWidth;
+        const size_t tailStart = numSIMDIters * simdWidth;
         
-        for(size_t i = 4; i < numCells; i += 4) {
-            __m256d v = _mm256_loadu_pd(valuesArg);
+        // SIMD min reduction (4x f64).
+        __m256d vmin = _mm256_set1_pd(std::numeric_limits<double>::max());
+        
+        for(size_t i = 0; i < numSIMDIters; i++) {
+            __m256d v = _mm256_loadu_pd(valuesArg + i * simdWidth);
             vmin = _mm256_min_pd(vmin, v);
-            valuesArg += 4;
         }
         
         // Horizontal min of accumulator elements.
         double m = reinterpret_cast<double*>(&vmin)[0];
         for(int i = 1; i < 4; i++)
             m = std::min(m, reinterpret_cast<double*>(&vmin)[i]);
+        
+        // Process tail elements (if any).
+        for(size_t i = tailStart; i < numCells; i++)
+            m = std::min(m, valuesArg[i]);
         
         return m;
     }
