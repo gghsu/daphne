@@ -2292,51 +2292,6 @@
                     "BITWISE_AND",
                     "CONCAT"
                 ]
-            },
-            {
-                "name": ["CPP"],
-                "instantiations": [
-                    [
-                        ["CSRMatrix", "float"],
-                        ["CSRMatrix", "float"],
-                        "float"
-                    ],
-                    [
-                        ["CSRMatrix", "double"],
-                        ["CSRMatrix", "double"],
-                        "double"
-                    ],
-                    [
-                        ["CSRMatrix", "int64_t"],
-                        ["CSRMatrix", "int64_t"],
-                        "int64_t"
-                    ],
-                    [
-                        ["CSRMatrix", "int32_t"],
-                        ["CSRMatrix", "int32_t"],
-                        "int32_t"
-                    ],
-                    [
-                        ["CSRMatrix", "uint32_t"],
-                        ["CSRMatrix", "uint32_t"],
-                        "uint32_t"
-                    ],
-                    [
-                        ["CSRMatrix", "uint64_t"],
-                        ["CSRMatrix", "uint64_t"],
-                        "uint64_t"
-                    ]
-                ],
-                "opCodes": [
-                    "ADD",
-                    "SUB",
-                    "MUL",
-                    "DIV",
-                    "POW",
-                    "MOD",
-                    "MIN",
-                    "MAX"
-                ]
             }
         ]
     },
