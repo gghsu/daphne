@@ -25,6 +25,7 @@
 #include <chrono>
 #include <cstddef>
 #include <iostream>
+#include <iomanip>
 
 // ****************************************************************************
 // Struct for partial template specialization
@@ -55,77 +56,100 @@ void colJoin(DTResLhsPos *&resLhsPos, DTResRhsPos *&resRhsPos, const DTLhsData *
 
 template <typename VTData, typename VTPos>
 struct ColJoin<Column<VTPos>, Column<VTPos>, Column<VTData>, Column<VTData>> {
-    static void apply(Column<VTPos> *&resLhsPos, Column<VTPos> *&resRhsPos, const Column<VTData> *lhsData,
-                      const Column<VTData> *rhsData, int64_t numRes, DCTX(ctx)) {
-        const size_t numLhsData = lhsData->getNumRows();
-        const size_t numRhsData = rhsData->getNumRows();
+private:
+    // Core hash join logic using narrower key type
+    template <typename VTKeyInternal>
+    static size_t colJoinCore(VTPos *valuesResLhsPos, VTPos *valuesResRhsPos,
+                              const VTData *valuesLhsData, const VTData *valuesRhsData,
+                              size_t numLhsData, size_t numRhsData,
+                              VTData rhsMin, VTData rhsMax) {
+        auto buildStart = std::chrono::steady_clock::now();
+        
+        // Build phase - use narrow key type for hash table
+        absl::flat_hash_map<VTKeyInternal, VTPos> ht;
+        
+        if constexpr (std::is_same_v<VTKeyInternal, VTData>) {
+            // No offset transformation needed
+            for (size_t r = 0; r < numRhsData; r++) {
+                ht[valuesRhsData[r]] = static_cast<VTPos>(r);
+            }
+            
+            auto probeStart = std::chrono::steady_clock::now();
+            double buildTime = std::chrono::duration<double>(probeStart - buildStart).count();
 
-        // Check if we should dispatch to a more efficient type
-        if constexpr (std::is_same_v<VTPos, size_t> && std::is_arithmetic_v<VTData>) {
-            // Only try to optimize if VTPos is size_t (the default/generic type) and VTData is numeric
-            if (lhsData->is_minValue && lhsData->is_maxValue) {
-                double range = lhsData->maxValue - lhsData->minValue;
-                
-                // Dispatch to uint32_t if range fits
-                if (range <= 4294967295.0 && numLhsData <= 4294967295ULL) {
-                    Column<uint32_t> *resLhsPos32 = nullptr;
-                    Column<uint32_t> *resRhsPos32 = nullptr;
-                    ColJoin<Column<uint32_t>, Column<uint32_t>, Column<VTData>, Column<VTData>>::apply(
-                        resLhsPos32, resRhsPos32, lhsData, rhsData, numRes, ctx);
-                                        
-                    size_t numRows = resLhsPos32->getNumRows();
-                    
-                    // Convert result back to size_t
-                    if (resLhsPos == nullptr)
-                        resLhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
-                    if (resRhsPos == nullptr)
-                        resRhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
-                    VTPos *valuesResLhs = resLhsPos->getValues();
-                    VTPos *valuesResRhs = resRhsPos->getValues();
-                    const uint32_t *values32Lhs = resLhsPos32->getValues();
-                    const uint32_t *values32Rhs = resRhsPos32->getValues();
-                    for (size_t i = 0; i < numRows; i++) {
-                        valuesResLhs[i] = static_cast<VTPos>(values32Lhs[i]);
-                        valuesResRhs[i] = static_cast<VTPos>(values32Rhs[i]);
-                    }
-                    
-                    DataObjectFactory::destroy(resLhsPos32);
-                    DataObjectFactory::destroy(resRhsPos32);
-                    return;
-                }
-                // Dispatch to uint8_t if range fits
-                else if (range <= 255.0 && numLhsData <= 255ULL) {
-                    Column<uint8_t> *resLhsPos8 = nullptr;
-                    Column<uint8_t> *resRhsPos8 = nullptr;
-                    ColJoin<Column<uint8_t>, Column<uint8_t>, Column<VTData>, Column<VTData>>::apply(
-                        resLhsPos8, resRhsPos8, lhsData, rhsData, numRes, ctx);
-                                        
-                    size_t numRows = resLhsPos8->getNumRows();
-                    
-                    // Convert result back to size_t
-                    if (resLhsPos == nullptr)
-                        resLhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
-                    if (resRhsPos == nullptr)
-                        resRhsPos = DataObjectFactory::create<Column<VTPos>>(numRows, false);
-                    VTPos *valuesResLhs = resLhsPos->getValues();
-                    VTPos *valuesResRhs = resRhsPos->getValues();
-                    const uint8_t *values8Lhs = resLhsPos8->getValues();
-                    const uint8_t *values8Rhs = resRhsPos8->getValues();
-                    for (size_t i = 0; i < numRows; i++) {
-                        valuesResLhs[i] = static_cast<VTPos>(values8Lhs[i]);
-                        valuesResRhs[i] = static_cast<VTPos>(values8Rhs[i]);
-                    }
-                    
-                    DataObjectFactory::destroy(resLhsPos8);
-                    DataObjectFactory::destroy(resRhsPos8);
-                    return;
+            size_t posRes = 0;
+            size_t lookupCount = 0;
+            for (size_t r = 0; r < numLhsData; r++) {
+                lookupCount++;
+                auto it = ht.find(valuesLhsData[r]);
+                if (it != ht.end()) {
+                    valuesResLhsPos[posRes] = static_cast<VTPos>(r);
+                    valuesResRhsPos[posRes] = it->second;
+                    posRes++;
                 }
             }
-        }    
+            
+            auto probeEnd = std::chrono::steady_clock::now();
+            double probeTime = std::chrono::duration<double>(probeEnd - probeStart).count();
+            
+            return posRes;
+        } else {
+            // Use offset transformation for narrower key types
+            for (size_t r = 0; r < numRhsData; r++) {
+                VTKeyInternal key = static_cast<VTKeyInternal>(valuesRhsData[r] - rhsMin);
+                ht[key] = static_cast<VTPos>(r);
+            }
+            
+            auto probeStart = std::chrono::steady_clock::now();
+            double buildTime = std::chrono::duration<double>(probeStart - buildStart).count();
+
+            // Probe phase - convert keys on-the-fly
+            size_t posRes = 0;
+            size_t rangeCheckCount = 0;
+            size_t lookupCount = 0;
+            for (size_t r = 0; r < numLhsData; r++) {
+                VTData lhsVal = valuesLhsData[r];
+                rangeCheckCount++;
+                // Range check: skip values outside rhs range
+                if (lhsVal >= rhsMin && lhsVal <= rhsMax) {
+                    lookupCount++;
+                    VTKeyInternal key = static_cast<VTKeyInternal>(lhsVal - rhsMin);
+                    auto it = ht.find(key);
+                    if (it != ht.end()) {
+                        valuesResLhsPos[posRes] = static_cast<VTPos>(r);
+                        valuesResRhsPos[posRes] = it->second;
+                        posRes++;
+                    }
+                }
+            }
+            
+            auto probeEnd = std::chrono::steady_clock::now();
+            double probeTime = std::chrono::duration<double>(probeEnd - probeStart).count();
+            double filterRate = (rangeCheckCount - lookupCount) * 100.0 / rangeCheckCount;
+            std::cerr << "  [filtered " << std::fixed << std::setprecision(1) 
+                      << filterRate << "% lookups]" << std::endl;
+            
+            return posRes;
+        }
+    }
+
+public:
+    static void apply(Column<VTPos> *&resLhsPos, Column<VTPos> *&resRhsPos, const Column<VTData> *lhsData,
+                      const Column<VTData> *rhsData, int64_t numRes, DCTX(ctx)) {
+        
+        auto startTime = std::chrono::steady_clock::now();
+
+        const size_t numLhsData = lhsData->getNumRows();
+        const size_t numRhsData = rhsData->getNumRows();
+        
         if (numRes == -1)
             // Assuming FK-PK join.
             numRes = numLhsData;
 
+        const VTData *valuesLhsData = lhsData->getValues();
+        const VTData *valuesRhsData = rhsData->getValues();
+
+        // Allocate result columns
         if (resLhsPos == nullptr)
             resLhsPos = DataObjectFactory::create<Column<VTPos>>(numRes, false);
         if (resRhsPos == nullptr)
@@ -133,25 +157,70 @@ struct ColJoin<Column<VTPos>, Column<VTPos>, Column<VTData>, Column<VTData>> {
         VTPos *valuesResLhsPos = resLhsPos->getValues();
         VTPos *valuesResRhsPos = resRhsPos->getValues();
 
-        // Build phase.
-        absl::flat_hash_map<VTData, VTPos> ht;
-        const VTData *valuesRhsData = rhsData->getValues();
-        for (size_t r = 0; r < numRhsData; r++)
-            ht[valuesRhsData[r]] = r;
-
-        // Probe phase.
-        const VTData *valuesLhsData = lhsData->getValues();
         size_t posRes = 0;
-        for (size_t r = 0; r < numLhsData; r++) {
-            auto it = ht.find(valuesLhsData[r]);
-            if (it != ht.end()) {
-                valuesResLhsPos[posRes] = r;
-                valuesResRhsPos[posRes] = it->second;
-                posRes++;
+
+        // Check if we should dispatch to a narrower key type based on rhs data range
+        std::string keyTypePath;
+        if constexpr (std::is_arithmetic_v<VTData>) {
+            if (rhsData->is_minValue && rhsData->is_maxValue) {
+                VTData rhsMin = static_cast<VTData>(rhsData->minValue);
+                VTData rhsMax = static_cast<VTData>(rhsData->maxValue);
+                double range = rhsData->maxValue - rhsData->minValue;
+                
+                // Dispatch to uint8_t keys if range fits
+                if (range <= 255.0) {
+                    keyTypePath = "uint8_t";
+                    posRes = colJoinCore<uint8_t>(valuesResLhsPos, valuesResRhsPos, 
+                                                   valuesLhsData, valuesRhsData, 
+                                                   numLhsData, numRhsData, rhsMin, rhsMax);
+                }
+                // Dispatch to uint16_t keys if range fits
+                else if (range <= 65535.0) {
+                    keyTypePath = "uint16_t";
+                    posRes = colJoinCore<uint16_t>(valuesResLhsPos, valuesResRhsPos, 
+                                                    valuesLhsData, valuesRhsData, 
+                                                    numLhsData, numRhsData, rhsMin, rhsMax);
+                }
+                // Dispatch to uint32_t keys if range fits
+                else if (range <= 4294967295.0) {
+                    keyTypePath = "uint32_t";
+                    posRes = colJoinCore<uint32_t>(valuesResLhsPos, valuesResRhsPos, 
+                                                    valuesLhsData, valuesRhsData, 
+                                                    numLhsData, numRhsData, rhsMin, rhsMax);
+                }
+                else {
+                    keyTypePath = "original-type";
+                    // Use original VTData type
+                    posRes = colJoinCore<VTData>(valuesResLhsPos, valuesResRhsPos, 
+                                                  valuesLhsData, valuesRhsData, 
+                                                  numLhsData, numRhsData, rhsMin, rhsMax);
+                }
             }
+            else {
+                keyTypePath = "no-minmax";
+                // No min/max available, cannot use range optimization
+                posRes = colJoinCore<VTData>(valuesResLhsPos, valuesResRhsPos, 
+                                              valuesLhsData, valuesRhsData, 
+                                              numLhsData, numRhsData, 
+                                              static_cast<VTData>(0), static_cast<VTData>(0));
+            }
+        }
+        else {
+            keyTypePath = "non-arithmetic";
+            // Non-arithmetic types
+            posRes = colJoinCore<VTData>(valuesResLhsPos, valuesResRhsPos, 
+                                          valuesLhsData, valuesRhsData, 
+                                          numLhsData, numRhsData, 
+                                          VTData{}, VTData{});
         }
 
         resLhsPos->shrinkNumRows(posRes);
         resRhsPos->shrinkNumRows(posRes);
+
+        auto endTime = std::chrono::steady_clock::now();
+        double seconds = std::chrono::duration<double>(endTime - startTime).count();
+        std::cerr << "[KERNEL_TIME] ColJoin: " << std::fixed << std::setprecision(6) 
+                  << seconds << " seconds (Column " << numLhsData << "x" << numRhsData 
+                  << ", key=" << keyTypePath << ")" << std::endl;
     }
 };

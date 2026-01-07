@@ -162,12 +162,16 @@ struct CompilerUtils {
             return "float";
         if (t.isSignedInteger(8))
             return "int8_t";
+        if (t.isSignedInteger(16))
+            return "int16_t";
         if (t.isSignedInteger(32))
             return "int32_t";
         if (t.isSignedInteger(64))
             return "int64_t";
         if (t.isUnsignedInteger(8))
             return "uint8_t";
+        if (t.isUnsignedInteger(16))
+            return "uint16_t";
         if (t.isUnsignedInteger(32))
             return "uint32_t";
         if (t.isUnsignedInteger(64))

@@ -7391,7 +7391,19 @@
             [["Column", "size_t"], ["Column", "size_t"], ["Column", "double"], ["Column", "double"]],
             [["Column", "size_t"], ["Column", "size_t"], ["Column", "int64_t"], ["Column", "int64_t"]],
             [["Column", "size_t"], ["Column", "size_t"], ["Column", "uint64_t"], ["Column", "uint64_t"]],
-            [["Column", "size_t"], ["Column", "size_t"], ["Column", "std::string"], ["Column", "std::string"]]
+            [["Column", "size_t"], ["Column", "size_t"], ["Column", "std::string"], ["Column", "std::string"]],
+            [["Column", "uint8_t"], ["Column", "uint8_t"], ["Column", "double"], ["Column", "double"]],
+            [["Column", "uint8_t"], ["Column", "uint8_t"], ["Column", "int64_t"], ["Column", "int64_t"]],
+            [["Column", "uint8_t"], ["Column", "uint8_t"], ["Column", "uint64_t"], ["Column", "uint64_t"]],
+            [["Column", "uint8_t"], ["Column", "uint8_t"], ["Column", "std::string"], ["Column", "std::string"]],
+            [["Column", "uint16_t"], ["Column", "uint16_t"], ["Column", "double"], ["Column", "double"]],
+            [["Column", "uint16_t"], ["Column", "uint16_t"], ["Column", "int64_t"], ["Column", "int64_t"]],
+            [["Column", "uint16_t"], ["Column", "uint16_t"], ["Column", "uint64_t"], ["Column", "uint64_t"]],
+            [["Column", "uint16_t"], ["Column", "uint16_t"], ["Column", "std::string"], ["Column", "std::string"]],
+            [["Column", "uint32_t"], ["Column", "uint32_t"], ["Column", "double"], ["Column", "double"]],
+            [["Column", "uint32_t"], ["Column", "uint32_t"], ["Column", "int64_t"], ["Column", "int64_t"]],
+            [["Column", "uint32_t"], ["Column", "uint32_t"], ["Column", "uint64_t"], ["Column", "uint64_t"]],
+            [["Column", "uint32_t"], ["Column", "uint32_t"], ["Column", "std::string"], ["Column", "std::string"]]
         ]
     },
     {
@@ -7441,6 +7453,10 @@
             [["Column", "uint8_t"], ["Column", "int64_t"], ["Column", "int64_t"]],
             [["Column", "uint8_t"], ["Column", "uint64_t"], ["Column", "uint64_t"]],
             [["Column", "uint8_t"], ["Column", "std::string"], ["Column", "std::string"]],
+            [["Column", "uint16_t"], ["Column", "double"], ["Column", "double"]],
+            [["Column", "uint16_t"], ["Column", "int64_t"], ["Column", "int64_t"]],
+            [["Column", "uint16_t"], ["Column", "uint64_t"], ["Column", "uint64_t"]],
+            [["Column", "uint16_t"], ["Column", "std::string"], ["Column", "std::string"]],
             [["Column", "uint32_t"], ["Column", "double"], ["Column", "double"]],
             [["Column", "uint32_t"], ["Column", "int64_t"], ["Column", "int64_t"]],
             [["Column", "uint32_t"], ["Column", "uint64_t"], ["Column", "uint64_t"]],
