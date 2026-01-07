@@ -23,7 +23,10 @@
 #include <runtime/local/vectorized/MTWrapper.h>
 #include <runtime/local/vectorized/PipelineHWlocInfo.h>
 
+#include <chrono>
 #include <cstddef>
+#include <cstdlib>
+#include <fstream>
 
 using mlir::daphne::VectorCombine;
 using mlir::daphne::VectorSplit;
@@ -50,6 +53,8 @@ template <class DTRes> struct VectorizedPipeline {
         for (size_t i = 0; i < numOutputs; i++)
             outputs2[i] = outputs + i;
 
+        const auto t0 = std::chrono::steady_clock::now();
+
         if (ctx->getUserConfig().vectorized_single_queue) {
             wrapper->executeSingleQueue(funcs, outputs2, isScalar, inputs, numInputs, numOutputs, outRows, outCols,
                                         reinterpret_cast<VectorSplit *>(splits),
@@ -63,6 +68,13 @@ template <class DTRes> struct VectorizedPipeline {
                                                outCols, reinterpret_cast<VectorSplit *>(splits),
                                                reinterpret_cast<VectorCombine *>(combines), ctx, false);
         }
+
+        const auto t1 = std::chrono::steady_clock::now();
+        const double secs = std::chrono::duration<double>(t1 - t0).count();
+        
+        // Output to stderr for experiment tracking
+        std::cerr << "[KERNEL_TIME] VectorizedPipeline: " << std::fixed << std::setprecision(6) 
+                  << secs << " seconds" << std::endl;
 
         delete[] outputs2;
     }

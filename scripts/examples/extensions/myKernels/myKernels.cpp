@@ -259,7 +259,8 @@ extern "C" {
 
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time);
-        std::cerr << "*** myEwAdd (float) execution time: " << duration.count() << " seconds ***" << std::endl;
+        std::cerr << "[KERNEL_TIME] myEwAdd: " << std::fixed << std::setprecision(6)
+                  << duration.count() << " seconds" << std::endl;
     }
 
     // Custom element-wise addition kernel for double with automated piggyback analysis
@@ -310,7 +311,8 @@ extern "C" {
 
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time);
-        std::cerr << "*** myEwAddDouble execution time: " << duration.count() << " seconds ***" << std::endl;
+        std::cerr << "[KERNEL_TIME] myEwAddDouble: " << std::fixed << std::setprecision(6)
+                  << duration.count() << " seconds" << std::endl;
     }
 
     // Custom element-wise addition kernel for int64_t with automated piggyback analysis
@@ -360,7 +362,8 @@ extern "C" {
 
         auto end_time = std::chrono::high_resolution_clock::now();
         auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time);
-        std::cerr << "*** myEwAddInt64 execution time: " << duration.count() << " seconds ***" << std::endl;
+        std::cerr << "[KERNEL_TIME] myEwAddInt64: " << std::fixed << std::setprecision(6)
+                  << duration.count() << " seconds" << std::endl;
     }
 
     // ========== Element-wise Subtraction (EwSub) with Piggyback ==========

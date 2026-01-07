@@ -21,10 +21,19 @@
 #include <runtime/local/datastructures/DataObjectFactory.h>
 #include <runtime/local/datastructures/DenseMatrix.h>
 #include <runtime/local/datastructures/Matrix.h>
+#include <runtime/local/datastructures/SparsityPatternRegistry.h>
 #include <runtime/local/kernels/BinaryOpCode.h>
+#include <runtime/local/kernels/CompareSparsityPatterns.h>
 #include <runtime/local/kernels/EwBinarySca.h>
 
+#include <algorithm>
 #include <cstddef>
+#include <chrono>
+#include <iostream>
+#include <iomanip>
+#include <cstring>
+#include <chrono>
+#include <iostream>
 
 // ****************************************************************************
 // Struct for partial template specialization
@@ -55,6 +64,8 @@ template <typename VTres, typename VTlhs, typename VTrhs>
 struct EwBinaryMat<DenseMatrix<VTres>, DenseMatrix<VTlhs>, DenseMatrix<VTrhs>> {
     static void apply(BinaryOpCode opCode, DenseMatrix<VTres> *&res, const DenseMatrix<VTlhs> *lhs,
                       const DenseMatrix<VTrhs> *rhs, DCTX(ctx)) {
+        auto start_time = std::chrono::high_resolution_clock::now();
+
         const size_t numRowsLhs = lhs->getNumRows();
         const size_t numColsLhs = lhs->getNumCols();
         const size_t numRowsRhs = rhs->getNumRows();
@@ -104,6 +115,16 @@ struct EwBinaryMat<DenseMatrix<VTres>, DenseMatrix<VTlhs>, DenseMatrix<VTrhs>> {
                                      ") and rhs has shape (" + std::to_string(numRowsRhs) + " x " +
                                      std::to_string(numColsRhs) + ")");
         }
+
+        auto end_time = std::chrono::high_resolution_clock::now();
+        auto duration = std::chrono::duration_cast<std::chrono::duration<double>>(end_time - start_time);
+        
+        // Only output timing for matrices with > 1000 elements (avoid tiny helper matrices)
+        size_t totalElements = numRowsLhs * numColsLhs;
+        if (totalElements > 1) {
+            std::cerr << "[KERNEL_TIME] EwBinaryMat: " << std::fixed << std::setprecision(6)
+                      << duration.count() << " seconds (DenseMatrix " << numRowsLhs << "x" << numColsLhs << ")" << std::endl;
+        }
     }
 };
 
@@ -120,6 +141,109 @@ template <typename VT> struct EwBinaryMat<CSRMatrix<VT>, CSRMatrix<VT>, CSRMatri
             throw std::runtime_error("EwBinaryMat(CSR) - lhs and rhs must have "
                                      "the same dimensions.");
 
+        // Check if both matrices have the same sparsity pattern
+        bool sameSparityPattern = false;
+        auto analysis_start_time = std::chrono::high_resolution_clock::now();
+
+        // Case 1: Both have the same pattern ID (always check - O(1) cost)
+        if (lhs->is_sparsityPatternID && rhs->is_sparsityPatternID &&
+            lhs->sparsityPatternID == rhs->sparsityPatternID &&
+            lhs->sparsityPatternID != -1) {
+            sameSparityPattern = true;
+        }
+        // Case 2: Different pattern IDs - runtime comparison (only if adaptiveAnalyze enabled)
+        else if (ctx->getUserConfig().adaptiveAnalyze &&
+                 lhs->is_sparsityPatternID && rhs->is_sparsityPatternID &&
+                 lhs->sparsityPatternID != rhs->sparsityPatternID &&
+                 lhs->sparsityPatternID != -1 && rhs->sparsityPatternID != -1) {
+            bool patternsMatch = compareSparsityPatterns(lhs, rhs);
+            
+            if (patternsMatch) {
+                // Unify the pattern IDs - use the smaller ID
+                ssize_t unifiedID = std::min(lhs->sparsityPatternID, rhs->sparsityPatternID);
+                const_cast<CSRMatrix<VT>*>(lhs)->sparsityPatternID = unifiedID;
+                const_cast<CSRMatrix<VT>*>(rhs)->sparsityPatternID = unifiedID;
+                sameSparityPattern = true;
+            }
+        }
+        
+        auto analysis_end_time = std::chrono::high_resolution_clock::now();
+        auto analysis_duration = std::chrono::duration_cast<std::chrono::duration<double>>(analysis_end_time - analysis_start_time);
+
+        // Fast path for operations with same sparsity pattern
+        if (sameSparityPattern) {
+            if (opCode == BinaryOpCode::ADD) {
+                // Start execution timing (after analysis)
+                auto exec_start_time = std::chrono::high_resolution_clock::now();
+                
+                size_t nnz = lhs->getNumNonZeros();
+                if (res == nullptr)
+                    res = DataObjectFactory::create<CSRMatrix<VT>>(numRows, numCols, nnz, false);
+
+                // Share the sparsity pattern structure (rowOffsets and colIdxs)
+                res->setRowOffsetsSharedPtr(lhs->getRowOffsetsSharedPtr());
+                res->setColIdxsSharedPtr(lhs->getColIdxsSharedPtr());
+
+                // Only compute values array
+                VT* resValues = res->getValues();
+                const VT* lhsValues = lhs->getValues();
+                const VT* rhsValues = rhs->getValues();
+
+                for (size_t i = 0; i < nnz; i++) {
+                    resValues[i] = lhsValues[i] + rhsValues[i];
+                }
+
+                // Preserve the pattern ID
+                res->is_sparsityPatternID = true;
+                res->sparsityPatternID = lhs->sparsityPatternID;
+                
+                auto exec_end_time = std::chrono::high_resolution_clock::now();
+                auto exec_duration = std::chrono::duration_cast<std::chrono::duration<double>>(exec_end_time - exec_start_time);
+                
+                std::cerr << "[KERNEL_TIME] EwBinaryMat: " << std::fixed << std::setprecision(6)
+                          << exec_duration.count() << " seconds (CSR ADD_optimized, analysis: "
+                          << analysis_duration.count() << "s)" << std::endl;
+                return;
+            }
+            else if (opCode == BinaryOpCode::MUL) {
+                // Start execution timing (after analysis)
+                auto exec_start_time = std::chrono::high_resolution_clock::now();
+                
+                size_t nnz = lhs->getNumNonZeros();
+                if (res == nullptr)
+                    res = DataObjectFactory::create<CSRMatrix<VT>>(numRows, numCols, nnz, false);
+
+                // Share the sparsity pattern structure (rowOffsets and colIdxs)
+                res->setRowOffsetsSharedPtr(lhs->getRowOffsetsSharedPtr());
+                res->setColIdxsSharedPtr(lhs->getColIdxsSharedPtr());
+
+                // Only compute values array
+                VT* resValues = res->getValues();
+                const VT* lhsValues = lhs->getValues();
+                const VT* rhsValues = rhs->getValues();
+
+                for (size_t i = 0; i < nnz; i++) {
+                    resValues[i] = lhsValues[i] * rhsValues[i];
+                }
+
+                // Preserve the pattern ID
+                res->is_sparsityPatternID = true;
+                res->sparsityPatternID = lhs->sparsityPatternID;
+                
+                auto exec_end_time = std::chrono::high_resolution_clock::now();
+                auto exec_duration = std::chrono::duration_cast<std::chrono::duration<double>>(exec_end_time - exec_start_time);
+                
+                std::cerr << "[KERNEL_TIME] EwBinaryMat: " << std::fixed << std::setprecision(6)
+                          << exec_duration.count() << " seconds (CSR MUL_optimized, analysis: "
+                          << analysis_duration.count() << "s)" << std::endl;
+                return;
+            }
+        }
+
+        // Standard path: different patterns or non-ADD/MUL operations
+        // Start execution timing (after analysis)
+        auto exec_start_time = std::chrono::high_resolution_clock::now();
+        
         size_t maxNnz;
         switch (opCode) {
         case BinaryOpCode::ADD: // merge
@@ -242,6 +366,18 @@ template <typename VT> struct EwBinaryMat<CSRMatrix<VT>, CSRMatrix<VT>, CSRMatri
         default:
             throw std::runtime_error("EwBinaryMat(CSR) - unknown BinaryOpCode");
         }
+
+        // Assign a new pattern ID for the result (different patterns merged)
+        res->is_sparsityPatternID = true;
+        res->sparsityPatternID = SparsityPatternRegistry::getNewID();
+
+        auto exec_end_time = std::chrono::high_resolution_clock::now();
+        auto exec_duration = std::chrono::duration_cast<std::chrono::duration<double>>(exec_end_time - exec_start_time);
+        
+        const char* op_name = (opCode == BinaryOpCode::ADD) ? "ADD" : "MUL";
+        std::cerr << "[KERNEL_TIME] EwBinaryMat: " << std::fixed << std::setprecision(6)
+                  << exec_duration.count() << " seconds (CSR " << op_name << "_standard, analysis: "
+                  << analysis_duration.count() << "s)" << std::endl;
 
         // TODO Update number of non-zeros in result in the end.
     }

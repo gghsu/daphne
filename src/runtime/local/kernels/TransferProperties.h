@@ -43,39 +43,6 @@
 #include <atomic>
 #include <unordered_set>
 
-namespace {
-struct TPStats {
-    size_t autoCount = 0;
-    double autoTotal = 0.0;
-    size_t flagManualCount = 0;
-    double flagManualTotal = 0.0;
-    size_t flagAdaptiveCount = 0;
-    double flagAdaptiveTotal = 0.0;
-    ~TPStats() {
-        try {
-            if(autoCount + flagManualCount + flagAdaptiveCount == 0) return;
-            std::ofstream out("kernel_times.jsonl", std::ios::app);
-            if(!out) return;
-            const char *variant = std::getenv("DAPHNE_VARIANT");
-            const char *iter = std::getenv("DAPHNE_ITER");
-            auto emit = [&](const char *mode, size_t cnt, double tot) {
-                if(cnt == 0) return;
-                out << "{\"kernel\":\"TransferProperties\",\"mode\":\"" << mode
-                    << "\",\"avgSeconds\":" << std::fixed << std::setprecision(6) << (tot / cnt)
-                    << ",\"runs\":" << cnt << ",\"totalSeconds\":" << tot;
-                if(variant) out << ",\"variant\":\"" << variant << "\"";
-                if(iter) out << ",\"iter\":" << iter;
-                out << "}" << '\n';
-            };
-            emit("automatic", autoCount, autoTotal);
-            emit("flagged:manuallyAnalyze", flagManualCount, flagManualTotal);
-            emit("flagged:adaptiveAnalyze", flagAdaptiveCount, flagAdaptiveTotal);
-        } catch(...) { /* swallow */ }
-    }
-};
-static TPStats __tpStats;
-}
-
 // Lightweight channel to expose the last measured analysis time (seconds) to other kernels (e.g., Map)
 namespace TransferPropertiesRuntime {
     inline std::atomic<double> g_lastAnalyzeSeconds{0.0};
@@ -179,6 +146,7 @@ struct TransferProperties<DenseMatrix<VT>> {
         // Step 3: Determine which properties need to be computed
         // - Auto mode: analyze all properties that are still unknown
         // - Specific mode: analyze only requested properties that are still unknown
+        bool needSparsity  = !mat->is_sparsity  && (doAutoAnalysis || (doSpecificAnalysis && is_sparsity));
         bool needSymmetric = !mat->is_symmetric && (doAutoAnalysis || (doSpecificAnalysis && is_symmetric));
         bool needSortness  = !mat->is_sortness  && (doAutoAnalysis || (doSpecificAnalysis && is_sortness));
         bool needMin       = !mat->is_minValue  && (doAutoAnalysis || (doSpecificAnalysis && is_minValue));
@@ -190,6 +158,24 @@ struct TransferProperties<DenseMatrix<VT>> {
         auto startTime = std::chrono::steady_clock::now();
 
         // Step 4: Perform runtime property analysis
+        
+        // Analyze sparsity
+        if(needSparsity) {
+            const VT *values = arg->getValues();
+            size_t totalElements = numRows * numCols;
+            size_t numZeros = 0;
+            
+            for(size_t i = 0; i < totalElements; ++i) {
+                if(values[i] == static_cast<VT>(0)) {
+                    numZeros++;
+                }
+            }
+            
+            mat->sparsity = static_cast<double>(totalElements - numZeros) / static_cast<double>(totalElements);
+            mat->is_sparsity = true;
+            analyzedAny = true;
+        }
+        
         if constexpr(std::is_arithmetic_v<VT>) {
             if(needSymmetric) {
                 mat->symmetric = isSymmetric(arg, ctx) ? BoolOrUnknown::True : BoolOrUnknown::False;
@@ -199,36 +185,9 @@ struct TransferProperties<DenseMatrix<VT>> {
         }
 
         if(needSortness) {
-            bool useSIMD = userConfig.adaptiveAnalyze && 
-                          userConfig.adaptiveAnalyzeMode == DaphneUserConfig::AdaptiveAnalyzeMode::Simd;
-            
-            // Try SIMD version first if enabled
-            if(useSIMD) {
-                try {
-                    int64_t sortResult = 0;
-                    if constexpr(std::is_same_v<VT, double>) {
-                        sortResult = isSortedSimd<DenseMatrix<double>>(
-                            reinterpret_cast<const DenseMatrix<double> *>(arg), ctx);
-                    }
-                    else if constexpr(std::is_same_v<VT, float>) {
-                        sortResult = isSortedSimd<DenseMatrix<float>>(
-                            reinterpret_cast<const DenseMatrix<float> *>(arg), ctx);
-                    }
-                    mat->sortness = static_cast<MatrixSortness>(sortResult);
-                    mat->is_sortness = true;
-                    analyzedAny = true;
-                } catch(const std::runtime_error &) {
-                    // SIMD failed (e.g., wrong size), fall back to regular version
-                    mat->sortness = static_cast<MatrixSortness>(isSorted(arg, ctx));
-                    mat->is_sortness = true;
-                    analyzedAny = true;
-                }
-            } else {
-                // Use regular version
-                mat->sortness = static_cast<MatrixSortness>(isSorted(arg, ctx));
-                mat->is_sortness = true;
-                analyzedAny = true;
-            }
+            mat->sortness = static_cast<MatrixSortness>(isSorted(arg, ctx));
+            mat->is_sortness = true;
+            analyzedAny = true;
         }
 
         if constexpr(std::is_arithmetic_v<VT> && !std::is_same_v<VT, bool>) {
@@ -349,21 +308,9 @@ struct TransferProperties<DenseMatrix<VT>> {
         // Share analysis time with other kernels (e.g., Map cost model)
         TransferPropertiesRuntime::setLastAnalyzeSeconds(seconds);
         
-        // Track statistics for different analysis modes
-        bool isAdaptive = doSpecificAnalysis && userConfig.adaptiveAnalyze;
-        if(doAutoAnalysis && !isAdaptive) {
-            __tpStats.autoCount += 1;
-            __tpStats.autoTotal += seconds;
-        }
-        else if(isAdaptive) {
-            __tpStats.flagAdaptiveCount += 1;
-            __tpStats.flagAdaptiveTotal += seconds;
-        }
-
-        // Log the analysis for debugging
-        std::fprintf(stdout, "flaggedAnalysis: analyzed DenseMatrix<%s> [%zu x %zu] in %.6f s\n",
-                     typeid(VT).name(), numRows, numCols, seconds);
-        std::fflush(stdout);
+        // Log analysis time in unified format
+        std::cerr << "[KERNEL_TIME] TransferProperties: " << std::fixed << std::setprecision(6)
+                  << seconds << " seconds (DenseMatrix " << numRows << "x" << numCols << ")" << std::endl;
     }
 };
 
@@ -447,16 +394,6 @@ struct TransferProperties<Column<VT>> {
                 col->is_maxValue = true;
                 col->maxValue = maxValue;
             }
-            
-            if(is_sortness) {
-                col->is_sortness = true;
-                col->sortness = static_cast<MatrixSortness>(sortness);
-            }
-            
-            if(is_distinct && distinct != -1) {
-                col->is_distinct = true;
-                col->distinct = distinct;
-            }
         }
         
         const auto &userConfig = ctx->getUserConfig();
@@ -467,11 +404,13 @@ struct TransferProperties<Column<VT>> {
             return; // no analysis needed
         }
         
-        // Check which properties need computation
-        bool needSortness  = (doAutoAnalysis || (is_sortness  && !col->is_sortness));
-        bool needMin       = (doAutoAnalysis || (is_minValue  && !col->is_minValue));
-        bool needMax       = (doAutoAnalysis || (is_maxValue  && !col->is_maxValue));
-        bool needDistinct  = (doAutoAnalysis || (is_distinct  && !col->is_distinct));
+        // Check which properties need computation (only min/max for Column)
+        bool needMin = !col->is_minValue && (doAutoAnalysis || (doSpecificAnalysis && is_minValue));
+        bool needMax = !col->is_maxValue && (doAutoAnalysis || (doSpecificAnalysis && is_maxValue));
+        
+        if(!needMin && !needMax) {
+            return; // nothing to analyze
+        }
         
         bool analyzedAny = false;
         auto startTime = std::chrono::steady_clock::now();
@@ -479,66 +418,105 @@ struct TransferProperties<Column<VT>> {
         // Analyze min/max values for Column
         if constexpr(std::is_arithmetic_v<VT> && !std::is_same_v<VT, bool>) {
             if(needMin || needMax) {
-                const VT *values = arg->getValues();
-                if(numRows > 0) {
-                    VT minVal = values[0];
-                    VT maxVal = values[0];
-                    
-                    for(size_t i = 1; i < numRows; i++) {
-                        if(values[i] < minVal) minVal = values[i];
-                        if(values[i] > maxVal) maxVal = values[i];
+                bool useSIMD = userConfig.adaptiveAnalyze && 
+                              userConfig.adaptiveAnalyzeMode == DaphneUserConfig::AdaptiveAnalyzeMode::Simd;
+                
+                // SIMD implementation for int64_t type with AVX2
+                if(useSIMD && std::is_same_v<VT, int64_t>) {
+                    if(numRows > 0) {
+                        // Lambda with target attribute for AVX2
+                        auto simdMinMax = [](const int64_t* values, size_t numRows) 
+                            __attribute__((target("avx2"))) -> std::pair<int64_t, int64_t> {
+                            
+                            const size_t simdWidth = 4;
+                            const size_t simdIterations = numRows / simdWidth;
+                            
+                            // Initialize with first value
+                            __m256i minVec = _mm256_set1_epi64x(values[0]);
+                            __m256i maxVec = _mm256_set1_epi64x(values[0]);
+                            
+                            // SIMD main loop - use comparison and blend for int64 min/max
+                            for(size_t i = 0; i < simdIterations; i++) {
+                                __m256i dataVec = _mm256_loadu_si256((__m256i*)&values[i * simdWidth]);
+                                
+                                // Min: if data < min, use data, else use min
+                                __m256i cmpMin = _mm256_cmpgt_epi64(minVec, dataVec);
+                                minVec = _mm256_blendv_epi8(minVec, dataVec, cmpMin);
+                                
+                                // Max: if data > max, use data, else use max
+                                __m256i cmpMax = _mm256_cmpgt_epi64(dataVec, maxVec);
+                                maxVec = _mm256_blendv_epi8(maxVec, dataVec, cmpMax);
+                            }
+                            
+                            // Horizontal reduction
+                            int64_t minArr[4], maxArr[4];
+                            _mm256_storeu_si256((__m256i*)minArr, minVec);
+                            _mm256_storeu_si256((__m256i*)maxArr, maxVec);
+                            
+                            int64_t minVal = std::min({minArr[0], minArr[1], minArr[2], minArr[3]});
+                            int64_t maxVal = std::max({maxArr[0], maxArr[1], maxArr[2], maxArr[3]});
+                            
+                            // Process tail elements
+                            size_t tailStart = simdIterations * simdWidth;
+                            for(size_t i = tailStart; i < numRows; i++) {
+                                if(values[i] < minVal) minVal = values[i];
+                                if(values[i] > maxVal) maxVal = values[i];
+                            }
+                            
+                            return {minVal, maxVal};
+                        };
+                        
+                        const int64_t *values = reinterpret_cast<const int64_t *>(arg->getValues());
+                        auto [minVal, maxVal] = simdMinMax(values, numRows);
+                        
+                        if(needMin) {
+                            col->minValue = static_cast<double>(minVal);
+                            col->is_minValue = true;
+                            analyzedAny = true;
+                        }
+                        if(needMax) {
+                            col->maxValue = static_cast<double>(maxVal);
+                            col->is_maxValue = true;
+                            analyzedAny = true;
+                        }
                     }
-                    
-                    if(needMin) {
-                        col->minValue = static_cast<double>(minVal);
-                        col->is_minValue = true;
-                        analyzedAny = true;
-                    }
-                    if(needMax) {
-                        col->maxValue = static_cast<double>(maxVal);
-                        col->is_maxValue = true;
-                        analyzedAny = true;
+                }
+                // Scalar fallback for non-int64_t types or when SIMD disabled
+                else {
+                    const VT *values = arg->getValues();
+                    if(numRows > 0) {
+                        VT minVal = values[0];
+                        VT maxVal = values[0];
+                        
+                        for(size_t i = 1; i < numRows; i++) {
+                            if(values[i] < minVal) minVal = values[i];
+                            if(values[i] > maxVal) maxVal = values[i];
+                        }
+                        
+                        if(needMin) {
+                            col->minValue = static_cast<double>(minVal);
+                            col->is_minValue = true;
+                            analyzedAny = true;
+                        }
+                        if(needMax) {
+                            col->maxValue = static_cast<double>(maxVal);
+                            col->is_maxValue = true;
+                            analyzedAny = true;
+                        }
                     }
                 }
             }
         }
         
-        // Analyze sortness for Column
-        if(needSortness && numRows > 0) {
-            const VT *values = arg->getValues();
-            bool isAscending = true;
-            bool isDescending = true;
-            
-            for(size_t i = 1; i < numRows && (isAscending || isDescending); i++) {
-                if(values[i] < values[i-1]) isAscending = false;
-                if(values[i] > values[i-1]) isDescending = false;
-            }
-            
-            if(isAscending && isDescending)
-                col->sortness = MatrixSortness::AllEqual;
-            else if(isAscending)
-                col->sortness = MatrixSortness::SortedAsc;
-            else if(isDescending)
-                col->sortness = MatrixSortness::SortedDesc;
-            else
-                col->sortness = MatrixSortness::NotSorted;
-            
-            col->is_sortness = true;
-            analyzedAny = true;
-        }
-        
-        // Analyze distinct count for Column
-        if(needDistinct && numRows > 0) {
-            const VT *values = arg->getValues();
-            std::unordered_set<VT> uniqueValues;
-            for(size_t i = 0; i < numRows; i++) {
-                uniqueValues.insert(values[i]);
-            }
-            col->distinct = static_cast<ssize_t>(uniqueValues.size());
-            col->is_distinct = true;
-            analyzedAny = true;
-        }
-        
         if(!analyzedAny) return;
+
+        // Record analysis time and statistics
+        auto endTime = std::chrono::steady_clock::now();
+        double seconds = std::chrono::duration<double>(endTime - startTime).count();
+
+        // Log analysis time in unified format
+        std::cerr << "[KERNEL_TIME] TransferProperties: " << std::fixed << std::setprecision(6)
+                  << seconds << " seconds (Column " << numRows << ")" << std::endl;
+
     }
 };
