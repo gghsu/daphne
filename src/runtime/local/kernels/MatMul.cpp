@@ -21,6 +21,9 @@
 #include <cblas.h>
 #include <cstdint>
 #include <spdlog/spdlog.h>
+#include <chrono>
+#include <iomanip>
+#include <iostream>
 
 // ****************************************************************************
 // DOT
@@ -249,42 +252,112 @@ template <typename VT>
 void MatMul<DenseMatrix<VT>, DenseMatrix<VT>, DenseMatrix<VT>>::apply(DenseMatrix<VT> *&res, const DenseMatrix<VT> *lhs,
                                                                       const DenseMatrix<VT> *rhs, bool transa,
                                                                       bool transb, DCTX(dctx)) {
-    const auto nr1 = static_cast<int>(transa ? lhs->getNumCols() : lhs->getNumRows());
-    const auto nc1 = static_cast<int>(transa ? lhs->getNumRows() : lhs->getNumCols());
-    const auto nr2 = static_cast<int>(transb ? rhs->getNumCols() : rhs->getNumRows());
-    const auto nc2 = static_cast<int>(transb ? rhs->getNumRows() : rhs->getNumCols());
-    if (nc1 != nr2) {
-        throw std::runtime_error("MatMul - #cols of lhs and #rows of rhs must be the same");
-    }
-    const VT alpha = 1.0f;
-    const VT beta = 0.0f;
-    if (res == nullptr)
-        res = DataObjectFactory::create<DenseMatrix<VT>>(nr1, nc2, false);
+    // Start timing for performance measurement
+    auto startTime = std::chrono::high_resolution_clock::now();
 
-    // adding BLAS nomenclature - should be optimized away by the compiler ;-)
-    auto m = nr1;
-    auto n = nc2;
-    auto k = nr2;
-    auto lda = lhs->getRowSkip();
-    auto ldb = rhs->getRowSkip();
-    auto ldc = res->getRowSkip();
+    constexpr double SPARSITY_THRESHOLD = 0.005;
+    const bool useSparsePath = !transa && !transb && 
+                               lhs->sparsity != -1.0 && 
+                               lhs->sparsity <= SPARSITY_THRESHOLD;
+    
+    if (useSparsePath) {
+        // Alternative MatMul implementation exploiting zero elements in the lhs input (does not support transposed
+        // inputs). Benefits from every zero in the lhs input, even if the overall sparsity is high (e.g., 0.9), but is
+        // slower than the OpenBLAS-based original code path below (because this alternative code path does not use
+        // tricks like SIMD, cache-blocking, multi-threading, etc. yet). Thus, this alternative code path should only be
+        // used if the speed-up due to zeros in the lhs input outweighs the slow-down compared to the original code
+        // path.
+        
+        const size_t numRowsLhs = lhs->getNumRows();
+        const size_t numColsLhs = lhs->getNumCols();
+        const size_t numRowsRhs = rhs->getNumRows();
+        const size_t numColsRhs = rhs->getNumCols();
 
-    const auto A = lhs->getValues();
-    const auto B = rhs->getValues();
-    auto C = res->getValues();
+        if (numColsLhs != numRowsRhs)
+            throw std::runtime_error("shape mismatch");
 
-    if (nr1 == 1 && nc2 == 1) { // Vector-Vector
-        dctx->logger->debug("launch_dot<{}>(a[{}x{}], b[{}x{}])", typeid(alpha).name(), m, k, k, n);
-        res->set(0, 0, launch_dot(nc1, A, transa ? lda : 1, B, transb ? 1 : ldb));
-    } else if (nc2 == 1) { // Matrix-Vector
-        dctx->logger->debug("launch_gemv<{}>(A[{},{}], x[{}])", typeid(alpha).name(), m, k, k);
-        launch_gemv<VT>(transa, transb, lhs->getNumRows(), lhs->getNumCols(), alpha, A, lda, B, transb ? 1 : ldb, beta,
-                        C, ldc);
-    } else { // Matrix-Matrix
-        dctx->logger->debug("launch_gemm<{}>(C[{}x{}], A[{},{}], B[{}x{}], "
-                            "transA:{}, transB:{})",
-                            typeid(alpha).name(), m, n, m, k, k, n, transa, transb);
-        launch_gemm<VT>(transa, transb, nr1, nc2, nc1, alpha, A, lda, B, ldb, beta, C, ldc);
+        if (res == nullptr)
+            res = DataObjectFactory::create<DenseMatrix<VT>>(numRowsLhs, numColsRhs, false);
+
+        const VT *valuesLhs = lhs->getValues();
+        const VT *const valuesRhsBeg = rhs->getValues();
+        VT *valuesRes = res->getValues();
+        const size_t rowSkipLhs = lhs->getRowSkip();
+        const size_t rowSkipRhs = rhs->getRowSkip();
+        const size_t rowSkipRes = res->getRowSkip();
+
+        for (size_t r = 0; r < numRowsLhs; r++) {
+            // First inner / first rhs row.
+            const VT valLhs = valuesLhs[0];
+            if (valLhs == 0)
+                std::fill_n(valuesRes, numColsRhs, 0);
+            else
+                for (size_t c = 0; c < numColsRhs; c++)
+                    valuesRes[c] = valLhs * valuesRhsBeg[c];
+            // Remaining inners / remaining rhs rows.
+            for (size_t i = 1; i < numColsLhs; i++) {
+                const VT valLhs = valuesLhs[i];
+                if (valLhs != 0) {
+                    const VT *valuesRhs = valuesRhsBeg + i * rowSkipRhs;
+                    for (size_t c = 0; c < numColsRhs; c++)
+                        valuesRes[c] += valLhs * valuesRhs[c];
+                }
+            }
+            valuesRes += rowSkipRes;
+            valuesLhs += rowSkipLhs;
+        }
+        
+        // Log timing for sparse-aware path
+        auto endTime = std::chrono::high_resolution_clock::now();
+        double seconds = std::chrono::duration<double>(endTime - startTime).count();
+        std::cerr << "[KERNEL_TIME] MatMul: " << std::fixed << std::setprecision(6)
+                  << seconds << " seconds (sparse-aware, sparsity=" << lhs->sparsity << ")" << std::endl;
+    } else {
+        // Original MatMul implementation based on OpenBLAS.
+        
+        const auto nr1 = static_cast<int>(transa ? lhs->getNumCols() : lhs->getNumRows());
+        const auto nc1 = static_cast<int>(transa ? lhs->getNumRows() : lhs->getNumCols());
+        const auto nr2 = static_cast<int>(transb ? rhs->getNumCols() : rhs->getNumRows());
+        const auto nc2 = static_cast<int>(transb ? rhs->getNumRows() : rhs->getNumCols());
+        if (nc1 != nr2) {
+            throw std::runtime_error("MatMul - #cols of lhs and #rows of rhs must be the same");
+        }
+        const VT alpha = 1.0f;
+        const VT beta = 0.0f;
+        if (res == nullptr)
+            res = DataObjectFactory::create<DenseMatrix<VT>>(nr1, nc2, false);
+
+        // adding BLAS nomenclature - should be optimized away by the compiler ;-)
+        auto m = nr1;
+        auto n = nc2;
+        auto k = nr2;
+        auto lda = lhs->getRowSkip();
+        auto ldb = rhs->getRowSkip();
+        auto ldc = res->getRowSkip();
+
+        const auto A = lhs->getValues();
+        const auto B = rhs->getValues();
+        auto C = res->getValues();
+
+        if (nr1 == 1 && nc2 == 1) { // Vector-Vector
+            dctx->logger->debug("launch_dot<{}>(a[{}x{}], b[{}x{}])", typeid(alpha).name(), m, k, k, n);
+            res->set(0, 0, launch_dot(nc1, A, transa ? lda : 1, B, transb ? 1 : ldb));
+        } else if (nc2 == 1) { // Matrix-Vector
+            dctx->logger->debug("launch_gemv<{}>(A[{},{}], x[{}])", typeid(alpha).name(), m, k, k);
+            launch_gemv<VT>(transa, transb, lhs->getNumRows(), lhs->getNumCols(), alpha, A, lda, B, transb ? 1 : ldb,
+                            beta, C, ldc);
+        } else { // Matrix-Matrix
+            dctx->logger->debug("launch_gemm<{}>(C[{}x{}], A[{},{}], B[{}x{}], "
+                                "transA:{}, transB:{})",
+                                typeid(alpha).name(), m, n, m, k, k, n, transa, transb);
+            launch_gemm<VT>(transa, transb, nr1, nc2, nc1, alpha, A, lda, B, ldb, beta, C, ldc);
+        }
+        
+        // Log timing for dense BLAS path
+        auto endTime = std::chrono::high_resolution_clock::now();
+        double seconds = std::chrono::duration<double>(endTime - startTime).count();
+        std::cerr << "[KERNEL_TIME] MatMul: " << std::fixed << std::setprecision(6)
+                  << seconds << " seconds (dense-blas)" << std::endl;
     }
 }
 

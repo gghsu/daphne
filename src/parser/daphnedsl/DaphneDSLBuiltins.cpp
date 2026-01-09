@@ -1249,15 +1249,16 @@ antlrcpp::Any DaphneDSLBuiltins::build(mlir::Location loc, const std::string &fu
     }
 
     if (func == "analyzeData") {
-        checkNumArgsBetween(loc, func, numArgs, 6, 6);
+        checkNumArgsBetween(loc, func, numArgs, 7, 7);
         mlir::Value arg = args[0];
         mlir::Value analyzeSparsity = utils.castBoolIf(args[1]);
         mlir::Value analyzeSymmetric = utils.castBoolIf(args[2]);
         mlir::Value analyzeSortness = utils.castBoolIf(args[3]);
         mlir::Value analyzeMinMax = utils.castBoolIf(args[4]);
-        mlir::Value analyzeDistinct = utils.castBoolIf(args[5]);  
+        mlir::Value analyzeDistinct = utils.castBoolIf(args[5]);
+        mlir::Value analyzeSparsityPattern = utils.castBoolIf(args[6]);
 
-        return builder.create<AnalyzeDataOp>(loc, arg, analyzeSparsity, analyzeSymmetric, analyzeSortness, analyzeMinMax,analyzeDistinct).getOperation();
+        return builder.create<AnalyzeDataOp>(loc, arg, analyzeSparsity, analyzeSymmetric, analyzeSortness, analyzeMinMax, analyzeDistinct, analyzeSparsityPattern).getOperation();
     }
     
     // --------------------------------------------------------------------

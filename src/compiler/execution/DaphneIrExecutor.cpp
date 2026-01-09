@@ -157,6 +157,7 @@ bool DaphneIrExecutor::runPasses(mlir::ModuleOp module) {
         pm.addPass(mlir::daphne::createPrintIRPass("IR after selecting matrix representations:"));
 
     pm.addNestedPass<mlir::func::FuncOp>(mlir::daphne::createTransferDataPropertiesPass(userConfig_));
+    pm.addNestedPass<mlir::func::FuncOp>(mlir::daphne::createAdaptiveAnalyzePropertiesPass(userConfig_, usedLibPaths));
     if (userConfig_.explain_transfer_data_props)
         pm.addPass(mlir::daphne::createPrintIRPass("IR after transferring data properties:"));
 

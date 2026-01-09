@@ -277,4 +277,8 @@ def TransferDataPropertiesPass: Pass<"transfer-data-props", "::mlir::func::FuncO
     let constructor = "mlir::daphne::createTransferDataPropertiesPass()";
 }
 
+def AdaptiveAnalyzePropertiesPass: Pass<"adaptive-analyze-props", "::mlir::func::FuncOp"> {
+    let constructor = "mlir::daphne::createAdaptiveAnalyzePropertiesPass()";
+}
+
 #endif // SRC_IR_DAPHNEIR_PASSES_TD

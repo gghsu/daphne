@@ -1828,6 +1828,7 @@ def Daphne_AnalyzeDataOp : Daphne_Op<"analyzeData"> {
         - sortness
         - minValue/maxValue
         - distinct values
+        - sparsity pattern
     }];
 
     let arguments = (ins MatrixOrFrame:$arg,
@@ -1835,7 +1836,8 @@ def Daphne_AnalyzeDataOp : Daphne_Op<"analyzeData"> {
         BoolScalar:$analyzeSymmetric,
         BoolScalar:$analyzeSortness,
         BoolScalar:$analyzeMinMax,
-        BoolScalar:$analyzeDistinct
+        BoolScalar:$analyzeDistinct,
+        BoolScalar:$analyzeSparsityPattern
     );
     
     let results = (outs); // no results

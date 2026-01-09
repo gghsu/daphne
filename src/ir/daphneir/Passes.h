@@ -84,6 +84,8 @@ std::unique_ptr<Pass> createVectorizeComputationsPass(bool isRestricted);
 std::unique_ptr<Pass> createHorizontalFusionPass();
 std::unique_ptr<Pass> createTransferDataPropertiesPass();
 std::unique_ptr<Pass> createTransferDataPropertiesPass(const DaphneUserConfig &cfg);
+std::unique_ptr<Pass> createAdaptiveAnalyzePropertiesPass(const DaphneUserConfig &cfg, std::unordered_map<std::string, bool> &usedLibPaths);
+std::unique_ptr<Pass> createAdaptiveAnalyzePropertiesPass();
 #ifdef USE_CUDA
 std::unique_ptr<Pass> createMarkCUDAOpsPass(const DaphneUserConfig &cfg);
 #endif

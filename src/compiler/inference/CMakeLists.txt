@@ -13,6 +13,7 @@
 # limitations under the License.
 
 add_mlir_dialect_library(MLIRDaphneInference
+    AdaptiveAnalyzePropertiesPass.cpp
     AdaptTypesToKernelsPass.cpp
     InferencePass.cpp
     SelectMatrixRepresentationsPass.cpp
