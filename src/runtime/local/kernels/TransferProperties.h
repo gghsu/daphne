@@ -25,7 +25,6 @@
 
 #include <runtime/local/kernels/IsSymmetric.h>
 #include <runtime/local/kernels/IsSorted.h>
-#include <runtime/local/kernels/IsSortedSimd.h>
 #include <runtime/local/kernels/AggAll.h>
 #include <runtime/local/kernels/AggOpCode.h>
 #include <runtime/local/kernels/NumDistinctCount.h>
