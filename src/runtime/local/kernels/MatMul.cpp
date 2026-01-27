@@ -255,11 +255,12 @@ void MatMul<DenseMatrix<VT>, DenseMatrix<VT>, DenseMatrix<VT>>::apply(DenseMatri
     // Start timing for performance measurement
     auto startTime = std::chrono::high_resolution_clock::now();
 
-    constexpr double SPARSITY_THRESHOLD = 0.005;
-    const bool useSparsePath = !transa && !transb && 
+    constexpr double SPARSITY_THRESHOLD = 0.01;
+    const bool useSparsePath = !transa && !transb &&
                                lhs->sparsity != -1.0 && 
                                lhs->sparsity <= SPARSITY_THRESHOLD;
-    
+                               //rhs->getNumCols() >= 50;    
+                                                             
     if (useSparsePath) {
         // Alternative MatMul implementation exploiting zero elements in the lhs input (does not support transposed
         // inputs). Benefits from every zero in the lhs input, even if the overall sparsity is high (e.g., 0.9), but is
@@ -357,7 +358,7 @@ void MatMul<DenseMatrix<VT>, DenseMatrix<VT>, DenseMatrix<VT>>::apply(DenseMatri
         auto endTime = std::chrono::high_resolution_clock::now();
         double seconds = std::chrono::duration<double>(endTime - startTime).count();
         std::cerr << "[KERNEL_TIME] MatMul: " << std::fixed << std::setprecision(6)
-                  << seconds << " seconds (dense-blas)" << std::endl;
+                  << seconds << " seconds (dense-blas, sparsity=" << lhs->sparsity << ")" << std::endl;
     }
 }
 
