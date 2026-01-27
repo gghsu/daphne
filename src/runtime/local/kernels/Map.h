@@ -78,7 +78,7 @@ template <typename VTRes, typename VTArg> struct Map<DenseMatrix<VTRes>, DenseMa
 
         // Determine threshold: adaptive cost model or static configuration
         size_t distinctThreshold = 1;
-        bool useAdaptiveThreshold = true;
+        bool useAdaptiveThreshold = false;
         
         // Read user configuration
         if(ctx != nullptr && argDistinct > 0) {
